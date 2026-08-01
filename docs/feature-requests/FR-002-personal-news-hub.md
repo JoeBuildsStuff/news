@@ -2,10 +2,10 @@
 
 | Field | Value |
 |-------|-------|
-| Status | open |
+| Status | done |
 | Created | 2026-08-01 |
 | Updated | 2026-08-01 |
-| Related | `fetch_feeds.py`, `fetch_x.py`, `backfill.py`, `enrich.py`, `feeds.yaml`, `x_accounts.yaml`, `data/feeds.db`; future Vite UI + FastAPI |
+| Related | `api.py`, `web/`, `fetch_feeds.py`, `fetch_x.py`, `backfill.py`, `enrich.py`, `feeds.yaml`, `x_accounts.yaml`, `data/feeds.db` |
 
 ## Problem
 
@@ -15,9 +15,9 @@ Ingest is already proven (RSS, X, Anthropic sitemap backfill, optional Jina bodi
 
 - A **read experience** (timeline / filters / open link or body)
 - A clear path to **add or drop subscriptions** over time (sites, X accounts, later Reddit, etc.)
-- Eventually an **always-on** hub (homelab), without forcing that on day one
+- Eventually an **always-on** host (server or home lab), without forcing that on day one
 
-This is a personal product, not a public news site. Closest existing OptiPlex service is Changedetection, but that answers “did this page change?” — we want “my curated stream.”
+This is a personal product, not a public news site. Generic page-change monitors answer “did this URL change?” — we want “my curated stream.”
 
 ## Target shape
 
@@ -37,17 +37,17 @@ Subscriptions stay config-driven at first (`feeds.yaml`, `x_accounts.yaml`, …)
 
 - Lowest cost; does not solve the “open one place” problem.
 
-### 2. Vite SPA + FastAPI over the same SQLite — **preferred**
+### 2. Vite SPA + FastAPI over the same SQLite — **preferred** / **scaffolded**
 
 - FastAPI: HTTP read layer; import `connect` / list helpers from `fetch_feeds.py`.
 - Vite: browser timeline; no second database; no tokens in the frontend.
 - Pollers remain CLIs (cron/manual); FastAPI does **not** own fetch/enrich as the primary design.
 
-### 3. Vite + Express (rent-price-calculator pattern)
+### 3. Vite + Node/Express API
 
-- Matches OptiPlex template language split; duplicates DB access in JS. Worse fit for this Python-first repo.
+- Duplicates DB access in JS. Worse fit for this Python-first repo.
 
-### 4. Next.js full-stack on OptiPlex from day one
+### 4. Next.js full-stack on a server from day one
 
 - Heavier than needed; deploy before proving daily read habit.
 
@@ -60,25 +60,28 @@ Reached 2026-08-01 (discussion; not implemented yet):
 3. **API:** FastAPI as a **thin read API** over `feeds.db` — correct framing. Not a replacement for pollers; not background-task-first.
 4. **Ingest stays Python CLIs** writing the shared schema. New sources = new adapters + YAML (or later config), same `items` table.
 5. **Subscriptions:** YAML for now; expect add/remove of sites, X accounts, Reddit, etc. over time. Don’t build subscription CRUD UI first.
-6. **Deploy:** stay on the laptop until the read UX is worth opening. OptiPlex later ≈ always-on poller + persistent volume + Traefik/SupaGate Pattern A (`news.joe-taylor.me` or similar) — not bolted into `homelab-dynamic` as an anonymous public app.
+6. **Deploy:** stay on the laptop until the read UX is worth opening. A later always-on deploy is reverse-proxied and authenticated — not an anonymous public app.
 7. **Invariants unchanged:** one DB; upsert `(feed_id, guid)`; secrets out of git; UI never becomes a second store.
 
 ## Decision
 
-_Scaffold not started — revisit when ready to build the read path._
+**Scaffolded for local testing (2026-08-01):**
 
-Preferred stack when implementing: **Vite + FastAPI + existing SQLite**, laptop-first.
+- `api.py` — FastAPI on `:8000` (`/api/health`, `/api/feeds`, `/api/items`, `/api/items/{id}`)
+- `web/` — Vite + React + shadcn timeline, typeset article body, light/dark mode toggle
+- Run: `python api.py` and `cd web && pnpm run dev` → http://127.0.0.1:5173
 
+Local read path is in place. **MVP done** (laptop hub). Follow-ups outside this FR: always-on deploy, subscription CRUD UI, extra adapters.
 ## Suggested build order
 
 1. Keep growing YAML subscriptions while learning which sources matter.
-2. FastAPI: list/filter recent items (title, source, published_at, link, optional body).
-3. Vite: chronological feed + source chips / filters.
-4. Promote poller + DB + UI to OptiPlex when always-fresh matters.
+2. ~~FastAPI: list/filter recent items~~ done (`api.py`)
+3. ~~Vite: chronological feed + source chips / filters~~ done (`web/`)
+4. Promote poller + DB + UI to an always-on host when freshness matters.
 5. Extra adapters (Reddit, …) after the hub UX exists.
 
 ## Notes
 
-- Homelab context: OptiPlex runs always-on apps; this stays a local data pipeline until the product earns a service slot.
-- Firecrawl on the OptiPlex is available for hard scrapes later; current niche correctly uses RSS / X / Jina — don’t force Firecrawl into the happy path.
+- Stay laptop-local until the read habit is proven; don’t deploy early for its own sake.
+- Prefer RSS / X / Jina for this niche; don’t force a general scrape platform into the happy path.
 - Related done work: [FR-001](./FR-001-full-article-body.md) (body enrich).

@@ -12,8 +12,10 @@ Local Python CLI that ingests AI-lab news into one SQLite database (`data/feeds.
 | `fetch_x.py` | X API (official brand accounts) | `x_accounts.yaml` + `X_BEARER_TOKEN` |
 | `backfill.py` | Anthropic sitemap scrape | CLI flags only |
 | `enrich.py` | Jina Reader (full article markdown) | `JINA_API_KEY` |
+| `api.py` | FastAPI read API over `feeds.db` | `--db` / `--port` |
+| `web/` | Vite + React timeline UI | proxies `/api` → `api.py` |
 
-All ingest scripts write the same `feeds` / `items` tables. X also uses `x_accounts` for username→user_id cache. `enrich.py` fills `items.body_*` for article links.
+All ingest scripts write the same `feeds` / `items` tables. X also uses `x_accounts` for username→user_id cache. `enrich.py` fills `items.body_*` for article links. `api.py` is read-only; it does not fetch or enrich.
 
 ## Layout
 
@@ -23,6 +25,8 @@ news/
 ├── fetch_x.py          # X poller (imports connect/list/mark/upsert from fetch_feeds)
 ├── backfill.py         # Anthropic sitemap + page scrape backfill
 ├── enrich.py           # Jina Reader → items.body_markdown
+├── api.py              # FastAPI thin read API (FR-002)
+├── web/                # Vite + React + shadcn timeline UI
 ├── feeds.yaml          # RSS feed list
 ├── x_accounts.yaml     # X accounts to poll
 ├── requirements.txt
@@ -32,9 +36,9 @@ news/
 └── README.md           # human setup/usage
 ```
 
-Do not invent a package layout unless asked. Keep scripts at repo root; share DB helpers via imports from `fetch_feeds`.
+Do not invent a package layout unless asked. Keep ingest scripts at repo root; share DB helpers via imports from `fetch_feeds`. The read UI lives under `web/` with `api.py` as the HTTP edge.
 
-Open product/design ideas live under `docs/feature-requests/` (e.g. FR-001 full article body). Read those before inventing overlapping features; update the FR when you implement or decide.
+Open product/design ideas live under `docs/feature-requests/` (e.g. FR-001 full article body, FR-002 personal news hub). Read those before inventing overlapping features; update the FR when you implement or decide.
 
 ## Invariants (do not break)
 
@@ -88,6 +92,12 @@ x_accounts(username PK COLLATE NOCASE, user_id, resolved_at)  -- X only
 - Idempotent: only rows with `body_status IS NULL` (or `--retry-errors`). Does not block `fetch_feeds.py` / `fetch_x.py`.
 - Skips `feed_id LIKE 'x-%'` by default; copies `summary` into `body_markdown` and marks `skipped`.
 
+### Read hub (`api.py` + `web/`)
+
+- FastAPI imports `connect` from `fetch_feeds`; serves `GET /api/health`, `/api/feeds`, `/api/items`, `/api/items/{id}`.
+- Does **not** run fetch/enrich. CORS allows Vite on `:5173`; Vite proxies `/api` in dev.
+- UI: chronological timeline + source chips; detail pane shows `body_markdown` when enriched, else summary.
+
 ## Commands agents should use
 
 ```bash
@@ -100,9 +110,11 @@ python enrich.py
 python enrich.py --status
 python fetch_feeds.py --list --limit 20
 python fetch_x.py --list --limit 50
+python api.py                              # read API on :8000
+cd web && pnpm install && pnpm run dev       # UI on :5173
 ```
 
-Optional paths: `--config`, `--db` on the fetch scripts.
+Optional paths: `--config`, `--db` on the fetch scripts; `--db`, `--port`, `--reload` on `api.py`.
 
 ## Coding conventions
 
@@ -111,6 +123,7 @@ Optional paths: `--config`, `--db` on the fetch scripts.
 - HTTP: `httpx` with `USER_AGENT = "news-local-fetcher/1.0 (+local)"` for RSS/scrape.
 - Per-source errors: catch, `mark_feed(..., status="error")`, print to stderr, continue other feeds/accounts—do not abort the whole run on one failure.
 - Prefer extending existing scripts over new frameworks, ORMs, or async rewrites unless requested.
+- Do not move ingest ownership into FastAPI background tasks unless explicitly asked (FR-002: thin read API).
 - When adding a feed/account: edit YAML only if no code change is needed; document in README if behavior/flags/env change.
 
 ## What not to do
@@ -119,7 +132,7 @@ Optional paths: `--config`, `--db` on the fetch scripts.
 - Do not hardcode API tokens.
 - Do not replace SQLite without an explicit request.
 - Do not “fix” Anthropic RSS by swapping to unofficial scrapers in `feeds.yaml` without noting that `backfill.py` exists for that gap.
-- Do not add Node/Next/UI layers unless the user asks.
+- Do not add Node/Next/UI layers beyond the existing `web/` Vite app unless the user asks.
 
 ## Docs to keep in sync
 

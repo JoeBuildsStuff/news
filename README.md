@@ -1,8 +1,8 @@
 # news
 
-Local fetcher that pulls AI-lab RSS feeds and X (Twitter) brand posts into one SQLite database.
+Local fetcher that pulls AI-lab RSS feeds and X (Twitter) brand posts into one SQLite database, plus an optional local read UI.
 
-Designed for scheduled polling on a laptop or homelab: small scripts, YAML config, no server.
+Designed for scheduled polling on a laptop or homelab: small scripts, YAML config, thin FastAPI + Vite for browsing.
 
 For AI coding assistants, see [AGENTS.md](./AGENTS.md). Feature ideas and design notes: [docs/](./docs/).
 
@@ -93,7 +93,28 @@ python enrich.py --retry-errors  # retry failed fetches
 
 Useful flags: `--feed openai`, `--delay 0.4`, `--include-x`.
 
-### Browse recent items
+### Browse in the browser (local hub)
+
+Thin FastAPI read API over `data/feeds.db` + Vite timeline UI. Pollers stay separate CLIs.
+
+Terminal 1 — API:
+
+```bash
+source .venv/bin/activate
+python api.py
+# http://127.0.0.1:8000/api/items
+```
+
+Terminal 2 — UI (proxies `/api` to the API):
+
+```bash
+cd web && pnpm install && pnpm run dev
+# http://127.0.0.1:5173
+```
+
+Useful API routes: `GET /api/health`, `/api/feeds`, `/api/items?feed_id=openai`, `/api/items/{id}`.
+
+### Browse recent items (CLI)
 
 ```bash
 python fetch_feeds.py --list
@@ -150,6 +171,8 @@ fetch_feeds.py     RSS ingest + shared DB schema
 fetch_x.py         X API poller
 backfill.py        Anthropic sitemap scrape
 enrich.py          Jina Reader full-article bodies
+api.py             FastAPI read API over feeds.db
+web/               Vite + React + shadcn timeline UI
 feeds.yaml         RSS config
 x_accounts.yaml    X accounts
 requirements.txt
