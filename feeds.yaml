@@ -1,0 +1,13 @@
+# Add or remove feeds here. Anthropic has no official RSS — the GitHub raw URL is a community mirror.
+feeds:
+  - id: openai
+    name: OpenAI News
+    url: https://openai.com/news/rss.xml
+
+  - id: anthropic-news
+    name: Anthropic News
+    url: https://raw.githubusercontent.com/taobojlen/anthropic-rss-feed/main/anthropic_news_rss.xml
+
+  - id: anthropic-engineering
+    name: Anthropic Engineering
+    url: https://raw.githubusercontent.com/taobojlen/anthropic-rss-feed/main/anthropic_engineering_rss.xml

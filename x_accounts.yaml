@@ -1,0 +1,26 @@
+# Official brand accounts to poll via the X API.
+# User IDs are resolved once and cached in SQLite (x_accounts table).
+accounts:
+  - id: x-openai
+    name: OpenAI (X)
+    username: OpenAI
+
+  - id: x-openaidevs
+    name: OpenAI Developers (X)
+    username: OpenAIDevs
+
+  - id: x-chatgpt
+    name: ChatGPT (X)
+    username: ChatGPT
+
+  - id: x-openainewsroom
+    name: OpenAI Newsroom (X)
+    username: OpenAINewsroom
+
+  - id: x-anthropicai
+    name: Anthropic (X)
+    username: AnthropicAI
+
+  - id: x-claudeai
+    name: Claude (X)
+    username: claudeai

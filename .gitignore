@@ -4,3 +4,9 @@ build/
 .env
 .env.local
 .DS_Store
+.venv/
+venv/
+data/
+.cursor/
+__pycache__/
+*.pyc
