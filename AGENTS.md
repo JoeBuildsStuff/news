@@ -11,8 +11,9 @@ Local Python CLI that ingests AI-lab news into one SQLite database (`data/feeds.
 | `fetch_feeds.py` | RSS | `feeds.yaml` |
 | `fetch_x.py` | X API (official brand accounts) | `x_accounts.yaml` + `X_BEARER_TOKEN` |
 | `backfill.py` | Anthropic sitemap scrape | CLI flags only |
+| `enrich.py` | Jina Reader (full article markdown) | `JINA_API_KEY` |
 
-All three write the same `feeds` / `items` tables. X also uses `x_accounts` for username→user_id cache.
+All ingest scripts write the same `feeds` / `items` tables. X also uses `x_accounts` for username→user_id cache. `enrich.py` fills `items.body_*` for article links.
 
 ## Layout
 
@@ -21,15 +22,19 @@ news/
 ├── fetch_feeds.py      # RSS fetch + shared SQLite schema/helpers
 ├── fetch_x.py          # X poller (imports connect/list/mark/upsert from fetch_feeds)
 ├── backfill.py         # Anthropic sitemap + page scrape backfill
+├── enrich.py           # Jina Reader → items.body_markdown
 ├── feeds.yaml          # RSS feed list
 ├── x_accounts.yaml     # X accounts to poll
 ├── requirements.txt
 ├── .env.example        # copy → .env.local
+├── docs/               # human docs + feature requests (see docs/feature-requests/)
 ├── data/               # gitignored: feeds.db, logs
 └── README.md           # human setup/usage
 ```
 
 Do not invent a package layout unless asked. Keep scripts at repo root; share DB helpers via imports from `fetch_feeds`.
+
+Open product/design ideas live under `docs/feature-requests/` (e.g. FR-001 full article body). Read those before inventing overlapping features; update the FR when you implement or decide.
 
 ## Invariants (do not break)
 
@@ -37,14 +42,15 @@ Do not invent a package layout unless asked. Keep scripts at repo root; share DB
 2. **Upsert by `(feed_id, guid)`.** Re-runs must be idempotent. Never insert duplicates for the same logical item.
 3. **Feed IDs are stable keys.** YAML `id` values (`openai`, `x-anthropicai`, `anthropic-news`, …) are primary keys. Renaming an id orphans or duplicates rows—treat as a migration.
 4. **Timestamps are UTC ISO-8601 strings** in SQLite text columns.
-5. **Secrets stay out of git.** Only `.env.local` / `.env` (gitignored). `fetch_x.py` needs `X_BEARER_TOKEN` only for app-only auth.
+5. **Secrets stay out of git.** Only `.env.local` / `.env` (gitignored). `fetch_x.py` needs `X_BEARER_TOKEN`; `enrich.py` needs `JINA_API_KEY`.
 6. **`data/` is ephemeral/local.** Never commit the DB or fetch logs.
 
 ## Data model
 
 ```sql
 feeds(id PK, name, url, last_fetched_at, last_status, last_error)
-items(id, feed_id → feeds, guid, title, link, summary, published_at, fetched_at)
+items(id, feed_id → feeds, guid, title, link, summary, published_at, fetched_at,
+      body_markdown, body_fetched_at, body_status, body_error)
   UNIQUE(feed_id, guid)
 x_accounts(username PK COLLATE NOCASE, user_id, resolved_at)  -- X only
 ```
@@ -52,6 +58,7 @@ x_accounts(username PK COLLATE NOCASE, user_id, resolved_at)  -- X only
 - RSS/backfill: `guid` is feed entry id/link (or article URL for Anthropic scrape).
 - X: `guid` is the numeric post id (string). Incremental polls use `ORDER BY CAST(guid AS INTEGER)` + `since_id`.
 - X posts are stored as `items` with `feeds.id` from `x_accounts.yaml` (e.g. `x-openai`), not a separate posts table.
+- `body_*`: filled by `enrich.py` via Jina Reader. Status is `ok` | `error` | `skipped`. X posts default to `skipped` (text already in `summary`).
 
 ## Source-specific notes
 
@@ -75,6 +82,12 @@ x_accounts(username PK COLLATE NOCASE, user_id, resolved_at)  -- X only
 - Scrapes og:title / og:description + published date from HTML; brittle against site redesigns.
 - Default `--delay 0.4` between page fetches—keep polite rate limits.
 
+### Article body enrich (`enrich.py`)
+
+- Needs `JINA_API_KEY`. Calls `https://r.jina.ai/{url}` with `Accept: application/json`, `X-Retain-Images: none`, `X-Retain-Media: none`, `X-Remove-Selector: nav,header,footer` (default Readability `content`, not raw `markdown`).
+- Idempotent: only rows with `body_status IS NULL` (or `--retry-errors`). Does not block `fetch_feeds.py` / `fetch_x.py`.
+- Skips `feed_id LIKE 'x-%'` by default; copies `summary` into `body_markdown` and marks `skipped`.
+
 ## Commands agents should use
 
 ```bash
@@ -83,6 +96,8 @@ python fetch_feeds.py
 python fetch_x.py
 python fetch_x.py --days 7
 python backfill.py --days 7
+python enrich.py
+python enrich.py --status
 python fetch_feeds.py --list --limit 20
 python fetch_x.py --list --limit 50
 ```

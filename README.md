@@ -4,7 +4,7 @@ Local fetcher that pulls AI-lab RSS feeds and X (Twitter) brand posts into one S
 
 Designed for scheduled polling on a laptop or homelab: small scripts, YAML config, no server.
 
-For AI coding assistants, see [AGENTS.md](./AGENTS.md).
+For AI coding assistants, see [AGENTS.md](./AGENTS.md). Feature ideas and design notes: [docs/](./docs/).
 
 ## What it stores
 
@@ -26,7 +26,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Copy env template and add an X bearer token (only needed for the X poller):
+Copy env template and add tokens:
 
 ```bash
 cp .env.example .env.local
@@ -36,9 +36,10 @@ cp .env.example .env.local
 X_BEARER_TOKEN=...
 X_CONSUMER_KEY=...   # optional for this poller
 X_SECRET_KEY=...     # optional for this poller
+JINA_API_KEY=...     # for enrich.py (full article bodies)
 ```
 
-`fetch_x.py` uses app-only auth (`X_BEARER_TOKEN` only).
+`fetch_x.py` uses app-only auth (`X_BEARER_TOKEN` only). `enrich.py` needs `JINA_API_KEY` for [Jina Reader](https://r.jina.ai/docs).
 
 The developer App must be attached to a **Project** with API access (pay-per-use) at [console.x.com](https://console.x.com). If you see `client-not-enrolled` / 403, enroll there, then regenerate the bearer token.
 
@@ -78,6 +79,20 @@ python backfill.py --days 7
 
 Sections default to `news,engineering,research`. OpenAI blog history already comes from RSS (`python fetch_feeds.py`).
 
+### Enrich full article bodies (Jina)
+
+Fetches markdown for each article `link` via Jina Reader and stores it on `items`. X posts are skipped by default (tweet text is already in `summary`). Safe to re-run; only pending rows are processed.
+
+```bash
+python enrich.py                 # backfill all pending articles
+python enrich.py --days 30       # only recent items
+python enrich.py --limit 10      # smoke test
+python enrich.py --status        # counts by body_status
+python enrich.py --retry-errors  # retry failed fetches
+```
+
+Useful flags: `--feed openai`, `--delay 0.4`, `--include-x`.
+
 ### Browse recent items
 
 ```bash
@@ -89,6 +104,7 @@ Or query SQLite:
 
 ```bash
 sqlite3 data/feeds.db "SELECT title, link, published_at FROM items ORDER BY published_at DESC LIMIT 20;"
+sqlite3 data/feeds.db "SELECT title, length(body_markdown), body_status FROM items WHERE body_status = 'ok' LIMIT 5;"
 ```
 
 ## Configure
@@ -97,7 +113,7 @@ sqlite3 data/feeds.db "SELECT title, link, published_at FROM items ORDER BY publ
 |------|---------|
 | `feeds.yaml` | RSS feeds (`id`, `name`, `url`) |
 | `x_accounts.yaml` | X accounts (`id`, `name`, `username`) |
-| `.env.local` | `X_BEARER_TOKEN` (and optional OAuth1 keys) |
+| `.env.local` | `X_BEARER_TOKEN`, `JINA_API_KEY` (and optional OAuth1 keys) |
 
 Feed/account `id` values are stable primary keys in SQLite — renaming one orphans old rows.
 
@@ -106,10 +122,11 @@ Feed/account `id` values are stable primary keys in SQLite — renaming one orph
 ```
 feeds        — one row per configured source (RSS or X account)
 items        — articles/posts; UNIQUE(feed_id, guid)
+             — optional body_markdown / body_status from enrich.py
 x_accounts   — username → user_id cache for the X API
 ```
 
-Shared helpers and schema live in `fetch_feeds.connect()`. X and backfill reuse that connection/schema.
+Shared helpers and schema live in `fetch_feeds.connect()`. X, Anthropic backfill, and enrich reuse that connection/schema.
 
 ## Schedule (optional)
 
@@ -132,10 +149,12 @@ Replace `/path/to/news` with your clone path. Ensure `data/` exists (scripts cre
 fetch_feeds.py     RSS ingest + shared DB schema
 fetch_x.py         X API poller
 backfill.py        Anthropic sitemap scrape
+enrich.py          Jina Reader full-article bodies
 feeds.yaml         RSS config
 x_accounts.yaml    X accounts
 requirements.txt
 .env.example
 AGENTS.md          guidance for coding agents
+docs/              docs + feature requests
 data/              local DB + logs (gitignored)
 ```

@@ -56,6 +56,10 @@ def connect(db_path: Path) -> sqlite3.Connection:
             summary TEXT,
             published_at TEXT,
             fetched_at TEXT NOT NULL,
+            body_markdown TEXT,
+            body_fetched_at TEXT,
+            body_status TEXT,
+            body_error TEXT,
             UNIQUE(feed_id, guid)
         );
 
@@ -63,7 +67,29 @@ def connect(db_path: Path) -> sqlite3.Connection:
             ON items(published_at DESC);
         """
     )
+    ensure_body_columns(conn)
     return conn
+
+
+def ensure_body_columns(conn: sqlite3.Connection) -> None:
+    """Migrate existing DBs created before body_* columns existed."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+    migrations = [
+        ("body_markdown", "TEXT"),
+        ("body_fetched_at", "TEXT"),
+        ("body_status", "TEXT"),
+        ("body_error", "TEXT"),
+    ]
+    for name, col_type in migrations:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE items ADD COLUMN {name} {col_type}")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_items_body_status
+            ON items(body_status)
+        """
+    )
+    conn.commit()
 
 
 def parse_date(value: object) -> str | None:
