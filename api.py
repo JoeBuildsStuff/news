@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Thin FastAPI read layer over data/feeds.db (FR-002). Pollers stay separate CLIs."""
+"""Thin FastAPI read layer over data/feeds.db (FR-002). Pollers stay separate CLIs.
+
+In production (OptiPlex), also serves the Vite build from WEB_DIST on :3000.
+"""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -11,6 +15,8 @@ from typing import Any, Iterator
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from fetch_feeds import DEFAULT_DB, connect
 
@@ -30,12 +36,20 @@ app.add_middleware(
 )
 
 _db_path: Path = DEFAULT_DB
+_web_dist: Path | None = None
+_spa_mounted = False
 
 
-def configure(db_path: Path | None = None) -> None:
-    global _db_path
+def configure(db_path: Path | None = None, web_dist: Path | None = None) -> None:
+    global _db_path, _web_dist
     if db_path is not None:
         _db_path = db_path
+    elif os.environ.get("DB_PATH"):
+        _db_path = Path(os.environ["DB_PATH"])
+    if web_dist is not None:
+        _web_dist = web_dist
+    elif os.environ.get("WEB_DIST"):
+        _web_dist = Path(os.environ["WEB_DIST"])
 
 
 @contextmanager
@@ -170,15 +184,51 @@ def get_item(item_id: int) -> dict[str, Any]:
     return row_to_item(row, include_body=True)
 
 
+def mount_spa() -> None:
+    """Serve Vite build for production. No-op when WEB_DIST is unset (local API)."""
+    global _spa_mounted
+    if _spa_mounted or _web_dist is None:
+        return
+    dist = _web_dist
+    if not dist.is_dir():
+        raise SystemExit(f"WEB_DIST not found: {dist}")
+
+    assets = dist / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str) -> FileResponse:
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        candidate = (dist / full_path).resolve()
+        try:
+            candidate.relative_to(dist.resolve())
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Not found") from exc
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(dist / "index.html")
+
+    _spa_mounted = True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve the local news read API")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--web-dist",
+        type=Path,
+        default=Path(os.environ["WEB_DIST"]) if os.environ.get("WEB_DIST") else None,
+        help="Vite dist directory (enables SPA serving)",
+    )
+    parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
 
-    configure(args.db)
+    configure(args.db, args.web_dist)
+    mount_spa()
 
     import uvicorn
 
@@ -189,6 +239,13 @@ def main() -> None:
         reload=args.reload,
         reload_dirs=[str(ROOT)] if args.reload else None,
     )
+
+
+# Production containers call `python api.py` which runs main(). For `uvicorn api:app`
+# without main(), call configure/mount from env at import when WEB_DIST is set.
+if os.environ.get("WEB_DIST") and not _spa_mounted:
+    configure()
+    mount_spa()
 
 
 if __name__ == "__main__":

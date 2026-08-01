@@ -71,17 +71,17 @@ Reached 2026-08-01 (discussion; not implemented yet):
 - `web/` — Vite + React + shadcn timeline, typeset article body, light/dark mode toggle
 - Run: `python api.py` and `cd web && pnpm run dev` → http://127.0.0.1:5173
 
-Local read path is in place. **MVP done** (laptop hub). Follow-ups outside this FR: always-on deploy, subscription CRUD UI, extra adapters.
+Local read path is in place. **MVP done** (laptop hub). **Pattern B self-host scaffolded (2026-08-01):** GHCR image from this OSS repo + private `news-homelab` overlay (Traefik/ofelia) — see [docs/self-hosting.md](../self-hosting.md). Follow-ups: cut over on OptiPlex, subscription CRUD UI, extra adapters.
 ## Suggested build order
 
 1. Keep growing YAML subscriptions while learning which sources matter.
 2. ~~FastAPI: list/filter recent items~~ done (`api.py`)
 3. ~~Vite: chronological feed + source chips / filters~~ done (`web/`)
-4. Promote poller + DB + UI to an always-on host when freshness matters.
+4. ~~Always-on host~~ Pattern B (GHCR + private overlay); cut over remaining.
 5. Extra adapters (Reddit, …) after the hub UX exists.
 
 ## Notes
 
-- Stay laptop-local until the read habit is proven; don’t deploy early for its own sake.
 - Prefer RSS / X / Jina for this niche; don’t force a general scrape platform into the happy path.
 - Related done work: [FR-001](./FR-001-full-article-body.md) (body enrich).
+- Self-host: [self-hosting.md](../self-hosting.md). Homelab overlay is private (not in this repo).

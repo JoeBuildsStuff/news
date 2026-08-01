@@ -151,7 +151,7 @@ Shared helpers and schema live in `fetch_feeds.connect()`. X, Anthropic backfill
 
 ## Schedule (optional)
 
-Hourly via cron:
+### Laptop cron
 
 ```bash
 crontab -e
@@ -164,20 +164,39 @@ crontab -e
 
 Replace `/path/to/news` with your clone path. Ensure `data/` exists (scripts create the DB parent dir on first run).
 
+### Docker / homelab
+
+Prebuilt image: `ghcr.io/joebuildsstuff/news:latest` (published on push to `main`).
+
+```bash
+cp docker-compose.example.yml docker-compose.yml
+cp .env.example .env   # set X_BEARER_TOKEN, JINA_API_KEY
+docker compose up -d
+# http://127.0.0.1:3000
+```
+
+Includes optional ofelia sidecar (hourly refresh + daily Anthropic backfill). Wipe the volume anytime and re-poll to rebuild the DB. Details: [docs/self-hosting.md](./docs/self-hosting.md).
+
+Site-specific Traefik / hostname overlays belong in a private `*-homelab` repo (same pattern as remotion-player-diy).
+
 ## Project layout
 
 ```
-fetch_feeds.py     RSS ingest + shared DB schema
-fetch_x.py         X API poller
-backfill.py        Anthropic sitemap scrape
-enrich.py          Jina Reader full-article bodies
-api.py             FastAPI read API over feeds.db
-web/               Vite + React + shadcn timeline UI
-feeds.yaml         RSS config
-x_accounts.yaml    X accounts
+fetch_feeds.py              RSS ingest + shared DB schema
+fetch_x.py                  X API poller
+backfill.py                 Anthropic sitemap scrape
+enrich.py                   Jina Reader full-article bodies
+api.py                      FastAPI read API (+ static UI in prod)
+web/                        Vite + React + shadcn timeline UI
+scripts/                    Container cron entrypoints (refresh / backfill)
+feeds.yaml                  RSS config
+x_accounts.yaml             X accounts
+Dockerfile                  multi-stage: Vite build + Python runtime
+docker-compose.example.yml  generic web + poller + ofelia
+.github/workflows/          CI + GHCR publish
 requirements.txt
 .env.example
-AGENTS.md          guidance for coding agents
-docs/              docs + feature requests
-data/              local DB + logs (gitignored)
+AGENTS.md                   guidance for coding agents
+docs/                       docs + feature requests
+data/                       local DB + logs (gitignored)
 ```

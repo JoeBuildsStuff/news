@@ -14,11 +14,11 @@ import yaml
 from dotenv import load_dotenv
 from xdk import Client
 
+from fetch_feeds import DEFAULT_DB
 from fetch_feeds import connect as feed_connect
 from fetch_feeds import list_recent, mark_feed, upsert_feed
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DB = ROOT / "data" / "feeds.db"
 DEFAULT_CONFIG = ROOT / "x_accounts.yaml"
 POST_FIELDS = ["created_at", "author_id", "conversation_id", "lang", "public_metrics", "text"]
 

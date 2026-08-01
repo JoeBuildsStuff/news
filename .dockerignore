@@ -1,0 +1,15 @@
+.git
+.gitea
+.venv
+data
+**/*.db
+**/*.db-*
+web/node_modules
+web/dist
+web-shadcn
+**/.DS_Store
+.env
+.env.*
+**/*.md
+!README.md
+docs

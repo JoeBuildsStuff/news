@@ -19,8 +19,9 @@ from urllib.parse import urlparse
 
 import httpx
 
+from fetch_feeds import DEFAULT_DB
+
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DB = ROOT / "data" / "feeds.db"
 USER_AGENT = "news-local-fetcher/1.0 (+local)"
 SITEMAP_URL = "https://www.anthropic.com/sitemap.xml"
 

@@ -22,10 +22,9 @@ from urllib.parse import quote
 import httpx
 from dotenv import load_dotenv
 
-from fetch_feeds import connect
+from fetch_feeds import DEFAULT_DB, connect
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DB = ROOT / "data" / "feeds.db"
 JINA_READER = "https://r.jina.ai"
 USER_AGENT = "news-local-fetcher/1.0 (+local)"
 REMOVE_SELECTOR = "nav,header,footer"

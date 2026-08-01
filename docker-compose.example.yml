@@ -1,0 +1,67 @@
+# Generic self-hosting compose. Copy to docker-compose.yml, edit, and
+# `docker compose up -d`. Prefer the prebuilt image from GHCR; uncomment
+# `build:` to build locally instead.
+#
+# Joe's OptiPlex Traefik/ofelia overlay lives in a private repo
+# (news-homelab) — see docs/self-hosting.md.
+
+services:
+  web:
+    image: ghcr.io/joebuildsstuff/news:latest
+    # build:
+    #   context: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      DB_PATH: /data/feeds.db
+      DB_JOURNAL_MODE: DELETE
+      WEB_DIST: /app/web/dist
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
+      JINA_API_KEY: ${JINA_API_KEY:-}
+    volumes:
+      - news-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Optional: keep the DB fresh without host cron.
+  # ofelia docker-execs into this idle twin of the app image.
+  poller:
+    image: ghcr.io/joebuildsstuff/news:latest
+    # build:
+    #   context: .
+    restart: unless-stopped
+    command: ["sleep", "infinity"]
+    healthcheck:
+      disable: true
+    environment:
+      DB_PATH: /data/feeds.db
+      DB_JOURNAL_MODE: DELETE
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
+      JINA_API_KEY: ${JINA_API_KEY:-}
+    volumes:
+      - news-data:/data
+    labels:
+      - "ofelia.enabled=true"
+      - "ofelia.job-exec.refresh.schedule=0 * * * *"
+      - "ofelia.job-exec.refresh.command=python /app/scripts/refresh.py"
+      - "ofelia.job-exec.backfill.schedule=15 6 * * *"
+      - "ofelia.job-exec.backfill.command=python /app/scripts/backfill_daily.py"
+
+  ofelia:
+    image: mcuadros/ofelia:latest
+    restart: unless-stopped
+    depends_on:
+      - poller
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  news-data:
