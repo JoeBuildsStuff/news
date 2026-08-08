@@ -204,7 +204,9 @@ export function ChatHistory() {
       messages: [],
     });
     setCurrentSessionIdFromServer(s.id);
+    openSessionTab(s.id);
     setSessions((prev) => [s, ...prev]);
+    setShowHistory(false);
   };
 
   const handleBackToChat = () => {

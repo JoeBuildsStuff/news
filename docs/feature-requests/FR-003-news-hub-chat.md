@@ -9,7 +9,7 @@ Port the floating chat panel from [new-job-title](https://new-job-title.joe-tayl
 
 ## What landed
 
-- **UI:** `web/src/components/chat/*` + shell (`ChatBubble`, `ChatFooterBar`, `ChatPanel`) mounted from `ChatShell` in `main.tsx`
+- **UI:** `web/src/components/chat/*` + shell (`ChatFooterBar` pinned at bottom of `h-dvh` column, `ChatPanel` floating or inset) mounted from `ChatShell` in `main.tsx` — same chrome as tech-stack-010226 dashboard (tabs + Ask Chat + history); inset mode is an in-flow right column that pushes hub content left (not a sheet overlay); floating `ChatBubble` is not the entry point
 - **Client persistence API:** `web/src/actions/chat.ts` → FastAPI `/api/chat/*` (replaced Next.js server actions)
 - **Backend:** `backend/services/chat_{db,tools,providers}.py` + `backend/api/chat.py` on the same SQLite DB (`chat_*` tables) + `data/chat` attachments
 - **Tools:** `news_search`, `news_get_item`, `news_list_feeds`; live `web_search` / `web_scrape` via Jina (`JINA_API_KEY`, preferred) or Firecrawl (`FIRECRAWL_API_KEY`)

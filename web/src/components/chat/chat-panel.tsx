@@ -71,13 +71,14 @@ export function ChatPanel() {
     <div
       className={cn(
         "z-40 bg-background border border-border flex flex-col transition-all duration-300 ease-in-out",
-        // Maximized (inset) state - full screen on mobile, right column on md+.
-        // Breakpoint matches the `md:mr-96` reserved space in providers.tsx.
+        // Maximized (inset): full-screen overlay on mobile; in-flow right
+        // column on md+ so ChatShell's flex row pushes main content left.
         isMaximized && [
-          "fixed inset-0 z-50 md:inset-y-0 md:left-auto md:right-0 md:w-96",
+          "fixed inset-0 z-50",
+          "md:relative md:inset-auto md:z-auto md:h-full md:w-96 md:shrink-0",
           "border-l border-t-0 border-r-0 border-b-0 rounded-none",
         ],
-        // Normal state - floating panel
+        // Normal state - floating panel (fixed, out of document flow)
         !isMaximized && [
           "fixed inset-x-0 top-0 bottom-9 sm:inset-auto sm:bottom-9 sm:right-1",
           "w-full h-auto sm:w-96 sm:h-[600px]",
