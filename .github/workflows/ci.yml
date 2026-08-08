@@ -24,7 +24,7 @@ jobs:
 
       - name: Compile Python modules
         run: |
-          python -m py_compile api.py fetch_feeds.py fetch_x.py backfill.py enrich.py \
+          python -m compileall -q backend api.py fetch_feeds.py fetch_x.py backfill.py enrich.py \
             scripts/refresh.py scripts/backfill_daily.py
 
       - uses: pnpm/action-setup@v4

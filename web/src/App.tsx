@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react"
 import ReactMarkdown from "react-markdown"
-import { ExternalLinkIcon } from "lucide-react"
+import { ExternalLinkIcon, SettingsIcon } from "lucide-react"
 
 import { fetchFeeds, fetchItem, fetchItems, type Feed, type Item } from "@/api"
 import { ModeToggle } from "@/components/mode-toggle"
+import { SourcesPanel } from "@/components/sources-panel"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { buttonVariants } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Empty,
   EmptyDescription,
@@ -44,12 +45,19 @@ export default function App() {
   const [detail, setDetail] = useState<Item | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [sourcesOpen, setSourcesOpen] = useState(false)
+  const [feedsTick, setFeedsTick] = useState(0)
 
   useEffect(() => {
     fetchFeeds()
-      .then((data) => setFeeds(data.feeds))
+      .then((data) => {
+        setFeeds(data.feeds)
+        setFeedId((current) =>
+          current && !data.feeds.some((f) => f.id === current) ? null : current
+        )
+      })
       .catch((err: Error) => setError(err.message))
-  }, [])
+  }, [feedsTick])
 
   useEffect(() => {
     let cancelled = false
@@ -70,7 +78,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [feedId])
+  }, [feedId, feedsTick])
 
   useEffect(() => {
     if (selectedId == null) {
@@ -106,7 +114,18 @@ export default function App() {
             Curated AI-lab stream from your local DB
           </p>
         </div>
-        <ModeToggle />
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Manage sources"
+            onClick={() => setSourcesOpen(true)}
+          >
+            <SettingsIcon />
+          </Button>
+          <ModeToggle />
+        </div>
       </header>
 
       <ToggleGroup
@@ -181,7 +200,7 @@ export default function App() {
                 <EmptyHeader>
                   <EmptyTitle>No items</EmptyTitle>
                   <EmptyDescription>
-                    Run the fetch scripts first.
+                    Run the fetch scripts first, or add a source.
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -242,6 +261,13 @@ export default function App() {
           )}
         </aside>
       </div>
+
+      {sourcesOpen && (
+        <SourcesPanel
+          onClose={() => setSourcesOpen(false)}
+          onChanged={() => setFeedsTick((n) => n + 1)}
+        />
+      )}
     </div>
   )
 }

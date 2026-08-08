@@ -4,8 +4,8 @@
 |-------|-------|
 | Status | done |
 | Created | 2026-08-01 |
-| Updated | 2026-08-01 |
-| Related | `api.py`, `web/`, `fetch_feeds.py`, `fetch_x.py`, `backfill.py`, `enrich.py`, `feeds.yaml`, `x_accounts.yaml`, `data/feeds.db` |
+| Updated | 2026-08-07 |
+| Related | `backend/`, `api.py` (shim), `web/`, ingest shims, `feeds.yaml`, `x_accounts.yaml`, `data/feeds.db` |
 
 ## Problem
 
@@ -25,11 +25,9 @@ This is a personal product, not a public news site. Generic page-change monitors
 Sources (RSS / X / Reddit / …)
   → adapters (Python CLIs today)
   → data/feeds.db   (one store, upsert on feed_id+guid)
-  → FastAPI         (thin read API)
-  → Vite UI         (timeline / filter by source)
+  → FastAPI         (thin read API + subscription CRUD)
+  → Vite UI         (timeline / filter by source / Sources panel)
 ```
-
-Subscriptions stay config-driven at first (`feeds.yaml`, `x_accounts.yaml`, …). UI-editable subscriptions are out of scope until the feed is sticky.
 
 ## Options
 
@@ -37,11 +35,11 @@ Subscriptions stay config-driven at first (`feeds.yaml`, `x_accounts.yaml`, …)
 
 - Lowest cost; does not solve the “open one place” problem.
 
-### 2. Vite SPA + FastAPI over the same SQLite — **preferred** / **scaffolded**
+### 2. Vite SPA + FastAPI over the same SQLite — **preferred** / **done**
 
-- FastAPI: HTTP read layer; import `connect` / list helpers from `fetch_feeds.py`.
-- Vite: browser timeline; no second database; no tokens in the frontend.
-- Pollers remain CLIs (cron/manual); FastAPI does **not** own fetch/enrich as the primary design.
+- FastAPI: HTTP read layer + subscription mutations; import `connect` / list helpers from `backend.db`.
+- Vite: browser timeline; no second database; no tokens in the frontend (optional admin Bearer in sessionStorage).
+- Pollers remain CLIs (cron/manual); FastAPI does **not** own hourly ingest.
 
 ### 3. Vite + Node/Express API
 
@@ -67,18 +65,30 @@ Reached 2026-08-01 (discussion; not implemented yet):
 
 **Scaffolded for local testing (2026-08-01):**
 
-- `api.py` — FastAPI on `:8000` (`/api/health`, `/api/feeds`, `/api/items`, `/api/items/{id}`)
+- `backend.main` (shim `api.py`) — FastAPI on `:8000` (`/api/health`, `/api/feeds`, `/api/items`, `/api/items/{id}`)
 - `web/` — Vite + React + shadcn timeline, typeset article body, light/dark mode toggle
-- Run: `python api.py` and `cd web && pnpm run dev` → http://127.0.0.1:5173
+- Run: `python api.py` (or `python -m backend`) and `cd web && pnpm run dev` → http://127.0.0.1:5173
 
-Local read path is in place. **MVP done** (laptop hub). **Pattern B self-host scaffolded (2026-08-01):** GHCR image from this OSS repo + private `news-homelab` overlay (Traefik/ofelia) — see [docs/self-hosting.md](../self-hosting.md). Follow-ups: cut over on OptiPlex, subscription CRUD UI, extra adapters.
+Local read path is in place. **MVP done** (laptop hub). **Pattern B self-host scaffolded (2026-08-01):** GHCR image from this OSS repo + private `news-homelab` overlay (Traefik/ofelia) — see [docs/self-hosting.md](../self-hosting.md).
+
+**Subscription CRUD (2026-08-07):**
+
+- SQLite is the subscription source of truth (`feeds.kind`, `enabled`, `exclude_retweets`, `exclude_replies`, `username`).
+- `feeds.yaml` / `x_accounts.yaml` seed once (`app_meta.subscriptions_seeded`); later starts do not overwrite UI edits.
+- Pollers read enabled DB rows; hourly ingest remains CLI/cron (not FastAPI background jobs).
+- API: `GET|POST /api/subscriptions`, `PATCH|DELETE /api/subscriptions/{id}` (DELETE = soft-disable). Optional `NEWS_ADMIN_TOKEN`.
+- UI: Sources panel — add RSS/X, unsubscribe/resubscribe, per-X “Include retweets”.
+- Timeline chips list enabled feeds; “All” still shows historical items from paused sources.
+
 ## Suggested build order
 
-1. Keep growing YAML subscriptions while learning which sources matter.
-2. ~~FastAPI: list/filter recent items~~ done (`api.py`)
+1. ~~Keep growing YAML subscriptions while learning which sources matter.~~ → grow via Sources UI; YAML remains seed.
+2. ~~FastAPI: list/filter recent items~~ done (`backend.main` / `api.py` shim)
 3. ~~Vite: chronological feed + source chips / filters~~ done (`web/`)
 4. ~~Always-on host~~ Pattern B (GHCR + private overlay); cut over remaining.
-5. Extra adapters (Reddit, …) after the hub UX exists.
+5. ~~Subscription CRUD UI~~ done (soft-disable + retweet toggle).
+6. Extra adapters (Reddit, …) after the hub UX exists.
+7. Optional later: hard-delete/purge, richer auth.
 
 ## Notes
 

@@ -21,6 +21,15 @@ services:
       WEB_DIST: /app/web/dist
       X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
       JINA_API_KEY: ${JINA_API_KEY:-}
+      NEWS_ADMIN_TOKEN: ${NEWS_ADMIN_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      LOCAL_CHAT_USER_ID: ${LOCAL_CHAT_USER_ID:-local}
+      CHAT_STORAGE_DIR: ${CHAT_STORAGE_DIR:-/data/chat}
+      WEB_SEARCH_MAX_USES: ${WEB_SEARCH_MAX_USES:-5}
     volumes:
       - news-data:/data
     healthcheck:
@@ -45,6 +54,7 @@ services:
       DB_JOURNAL_MODE: DELETE
       X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
       JINA_API_KEY: ${JINA_API_KEY:-}
+      NEWS_ADMIN_TOKEN: ${NEWS_ADMIN_TOKEN:-}
     volumes:
       - news-data:/data
     labels:

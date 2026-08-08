@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --chown=appuser:appgroup \
   api.py fetch_feeds.py fetch_x.py backfill.py enrich.py \
   feeds.yaml x_accounts.yaml ./
+COPY --chown=appuser:appgroup backend ./backend
 COPY --chown=appuser:appgroup scripts ./scripts
 COPY --from=web-builder --chown=appuser:appgroup /web/dist ./web/dist
 
