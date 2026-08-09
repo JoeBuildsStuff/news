@@ -174,6 +174,52 @@ def _tool_defs_openai(request: ChatRequest) -> list[dict[str, Any]]:
     ]
 
 
+def _tool_defs_openai_responses(request: ChatRequest) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "name": tool["name"],
+            "description": tool["description"],
+            "parameters": tool["input_schema"],
+        }
+        for tool in _enabled_tools(request)
+    ]
+
+
+def _responses_input_from_request(request: ChatRequest) -> list[dict[str, Any]]:
+    """Build Responses API input items from chat history + current turn."""
+    items: list[dict[str, Any]] = []
+    for item in _history(request)[:-1]:
+        items.append({"role": item["role"], "content": item["content"]})
+    if request.attachments:
+        parts: list[dict[str, Any]] = [{"type": "input_text", "text": request.message}]
+        for attachment in request.attachments:
+            if attachment.mime_type.startswith("image/"):
+                parts.append(
+                    {
+                        "type": "input_image",
+                        "image_url": (
+                            f"data:{attachment.mime_type};base64,"
+                            f"{base64.b64encode(attachment.data).decode()}"
+                        ),
+                    }
+                )
+            else:
+                parts.append(
+                    {
+                        "type": "input_text",
+                        "text": (
+                            f"File attachment: {attachment.name} "
+                            f"({attachment.mime_type}, {attachment.size} bytes)"
+                        ),
+                    }
+                )
+        items.append({"role": "user", "content": parts})
+    else:
+        items.append({"role": "user", "content": request.message})
+    return items
+
+
 async def _execute_tool(
     name: str, arguments: dict[str, Any], request: ChatRequest
 ) -> dict[str, Any]:
@@ -299,8 +345,131 @@ async def stream_anthropic(request: ChatRequest) -> AsyncIterator[bytes]:
             "done",
             {
                 "message": final_text.strip() or "No response generated",
+                "model": request.model or "claude-sonnet-4-20250514",
                 "toolCalls": tool_calls or None,
                 "citations": _citations(tool_calls) or None,
+                "actions": [],
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        yield sse("error", {"message": str(exc)})
+
+
+async def _stream_openai_responses(request: ChatRequest) -> AsyncIterator[bytes]:
+    """OpenAI gpt-5.* path: Responses API supports tools + reasoning_effort together."""
+    try:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        model = request.model or "gpt-5"
+        tools = _tool_defs_openai_responses(request)
+        all_tool_calls: list[dict[str, Any]] = []
+        final_text = ""
+        reasoning_text = ""
+        previous_response_id: str | None = None
+        current_input: list[dict[str, Any]] = _responses_input_from_request(request)
+
+        for _ in range(_max_tool_iterations()):
+            params: dict[str, Any] = {
+                "model": model,
+                "instructions": _system_prompt(request),
+                "input": current_input,
+                "stream": True,
+            }
+            if tools:
+                params["tools"] = tools
+            if previous_response_id:
+                params["previous_response_id"] = previous_response_id
+            effort = (request.reasoning_effort or "").strip() or None
+            if effort:
+                params["reasoning"] = {"effort": effort}
+
+            stream = await client.responses.create(**params)
+            response_id: str | None = None
+            calls: dict[str, dict[str, str]] = {}
+            content = ""
+
+            async for event in stream:
+                etype = getattr(event, "type", None)
+                if etype == "response.created":
+                    response = getattr(event, "response", None)
+                    response_id = getattr(response, "id", None) or response_id
+                elif etype == "response.output_text.delta":
+                    delta = getattr(event, "delta", None) or ""
+                    if delta:
+                        content += delta
+                        final_text += delta
+                        yield sse("delta", {"delta": delta})
+                elif etype == "response.reasoning_summary_text.delta":
+                    delta = getattr(event, "delta", None) or ""
+                    if delta:
+                        reasoning_text += delta
+                elif etype == "response.output_item.done":
+                    item = getattr(event, "item", None)
+                    if getattr(item, "type", None) == "function_call":
+                        call_id = getattr(item, "call_id", "") or ""
+                        calls[call_id] = {
+                            "id": call_id,
+                            "name": getattr(item, "name", "") or "",
+                            "arguments": getattr(item, "arguments", "") or "{}",
+                        }
+                elif etype == "response.completed":
+                    response = getattr(event, "response", None)
+                    response_id = getattr(response, "id", None) or response_id
+                    for item in getattr(response, "output", None) or []:
+                        if getattr(item, "type", None) != "function_call":
+                            continue
+                        call_id = getattr(item, "call_id", "") or ""
+                        if call_id and call_id not in calls:
+                            calls[call_id] = {
+                                "id": call_id,
+                                "name": getattr(item, "name", "") or "",
+                                "arguments": getattr(item, "arguments", "") or "{}",
+                            }
+
+            if not calls:
+                break
+
+            tool_outputs: list[dict[str, Any]] = []
+            for call_id, entry in calls.items():
+                try:
+                    arguments = json.loads(entry["arguments"] or "{}")
+                except ValueError:
+                    arguments = {}
+                yield sse(
+                    "tool_call",
+                    {"id": call_id, "name": entry["name"], "arguments": arguments},
+                )
+                result = await _execute_tool(entry["name"], arguments, request)
+                summary = {
+                    "id": call_id,
+                    "name": entry["name"],
+                    "arguments": arguments,
+                    "result": result,
+                }
+                all_tool_calls.append(summary)
+                yield sse("tool_result", {"id": call_id, "result": result})
+                tool_outputs.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": json.dumps(result, default=str),
+                    }
+                )
+
+            if not response_id:
+                break
+            previous_response_id = response_id
+            current_input = tool_outputs
+
+        yield sse(
+            "done",
+            {
+                "message": final_text.strip() or "No response generated",
+                "reasoning": reasoning_text or None,
+                "model": model,
+                "toolCalls": all_tool_calls or None,
+                "citations": _citations(all_tool_calls) or None,
                 "actions": [],
             },
         )
@@ -325,19 +494,21 @@ async def _stream_openai_compatible(
         all_tool_calls: list[dict[str, Any]] = []
         final_text = ""
         reasoning_text = ""
+        model = request.model or {
+            "openai": "gpt-5",
+            "xai": "grok-4",
+            "cerebras": "gpt-oss-120b",
+        }[provider]
 
         for _ in range(_max_tool_iterations()):
             params: dict[str, Any] = {
-                "model": request.model
-                or {
-                    "openai": "gpt-5",
-                    "xai": "grok-4",
-                    "cerebras": "gpt-oss-120b",
-                }[provider],
+                "model": model,
                 "messages": messages,
                 "stream": True,
                 "tools": tools or None,
             }
+            # chat.completions rejects tools + non-none reasoning for OpenAI gpt-5.*;
+            # OpenAI uses the Responses path instead. xAI/Cerebras still accept this.
             if request.reasoning_effort and request.reasoning_effort != "none":
                 params["reasoning_effort"] = request.reasoning_effort
             stream = await client.chat.completions.create(**params)
@@ -420,6 +591,7 @@ async def _stream_openai_compatible(
             {
                 "message": final_text.strip() or "No response generated",
                 "reasoning": reasoning_text or None,
+                "model": model,
                 "toolCalls": all_tool_calls or None,
                 "citations": _citations(all_tool_calls) or None,
                 "actions": [],
@@ -430,7 +602,7 @@ async def _stream_openai_compatible(
 
 
 async def stream_openai(request: ChatRequest) -> AsyncIterator[bytes]:
-    async for event in _stream_openai_compatible(request, "openai"):
+    async for event in _stream_openai_responses(request):
         yield event
 
 
@@ -445,51 +617,82 @@ async def stream_cerebras(request: ChatRequest) -> AsyncIterator[bytes]:
 
 
 async def generate_title(message: str, provider: str = "cerebras") -> str:
-    """Generate a short title, falling back to Anthropic when configured."""
+    """Generate a short title, falling back across providers when one fails."""
     prompt = (
         "Write a concise title for a personal AI-news chat. Return only 3-7 "
         "words, plain text, without quotes or ending punctuation.\n\n"
         + message[:4000]
     )
-    try:
-        if provider == "cerebras" and os.environ.get("CEREBRAS_API_KEY"):
-            from openai import AsyncOpenAI
+    errors: list[str] = []
 
-            client = AsyncOpenAI(
-                api_key=os.environ["CEREBRAS_API_KEY"],
-                base_url="https://api.cerebras.ai/v1",
-            )
-            response = await client.chat.completions.create(
-                model="gpt-oss-120b",
-                messages=[
-                    {"role": "system", "content": "Return only a short chat title."},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=40,
-                temperature=0.2,
-            )
-        else:
-            from anthropic import AsyncAnthropic
+    async def _via_cerebras() -> str | None:
+        if not os.environ.get("CEREBRAS_API_KEY", "").strip():
+            return None
+        from openai import AsyncOpenAI
 
-            client = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-            response = await client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=40,
-                system="Return only a short chat title.",
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = next(
-                (getattr(block, "text", "") for block in response.content if getattr(block, "type", "") == "text"),
-                "",
-            )
-            return _clean_title(text)
-        return _clean_title(response.choices[0].message.content or "")
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Failed to generate chat title: {exc}") from exc
+        client = AsyncOpenAI(
+            api_key=os.environ["CEREBRAS_API_KEY"],
+            base_url="https://api.cerebras.ai/v1",
+        )
+        response = await client.chat.completions.create(
+            model="gpt-oss-120b",
+            messages=[
+                {"role": "system", "content": "Return only a short chat title."},
+                {"role": "user", "content": prompt},
+            ],
+            max_completion_tokens=200,
+            temperature=0.2,
+            reasoning_effort="low",
+        )
+        if not response.choices:
+            return None
+        message_obj = response.choices[0].message
+        return _clean_title(getattr(message_obj, "content", None) or "")
+
+    async def _via_anthropic() -> str | None:
+        if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+            return None
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        response = await client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=40,
+            system="Return only a short chat title.",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = next(
+            (
+                getattr(block, "text", "")
+                for block in response.content
+                if getattr(block, "type", "") == "text"
+            ),
+            "",
+        )
+        return _clean_title(text)
+
+    order = (
+        (_via_cerebras, _via_anthropic)
+        if provider == "cerebras"
+        else (_via_anthropic, _via_cerebras)
+    )
+    for factory in order:
+        try:
+            title = await factory()
+            if title:
+                return title
+            errors.append(f"{factory.__name__}: empty title")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{factory.__name__}: {exc}")
+    detail = "; ".join(errors) if errors else "no title providers configured"
+    raise RuntimeError(f"Failed to generate chat title: {detail}")
 
 
-def _clean_title(value: str) -> str:
-    value = value.replace("<think>", "").replace("</think>", "")
-    value = value.splitlines()[0].strip().strip("\"'`")
-    value = " ".join(value.split()).rstrip(".!?")
-    return value[:60].strip()
+def _clean_title(value: str | None) -> str:
+    value = (value or "").replace("<think>", "").replace("</think>", "")
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    cleaned = lines[0].strip("\"'`")
+    cleaned = " ".join(cleaned.split()).rstrip(".!?")
+    return cleaned[:60].strip()

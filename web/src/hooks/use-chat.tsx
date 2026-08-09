@@ -44,6 +44,7 @@ interface ChatMessageRow {
   content: string;
   created_at: string;
   reasoning?: string;
+  model?: string | null;
   context?: Json;
   function_result?: Json;
   citations?: Json;
@@ -294,6 +295,7 @@ export function useChat({ onSendMessage, onActionClick }: UseChatProps = {}) {
           role: m.role,
           content: m.content,
           timestamp: new Date(m.created_at),
+          model: m.model || undefined,
           reasoning: m.reasoning || undefined,
           attachments,
           context: m.context
@@ -463,6 +465,7 @@ export function useChat({ onSendMessage, onActionClick }: UseChatProps = {}) {
         role: "assistant",
         content: assistantMessage.content,
         reasoning: assistantMessage.reasoning || null,
+        model: model || null,
         context: null,
         functionResult: (assistantMessage.functionResult as Json) || null,
         citations: (assistantMessage.citations as Json) || null,
@@ -630,6 +633,7 @@ export function useChat({ onSendMessage, onActionClick }: UseChatProps = {}) {
             sessionId: sid,
             role: "user",
             content: content.trim() || "Sent with attachments",
+            model: model || null,
             context: currentContext
               ? ({
                   filters: currentContext.currentFilters,
@@ -800,6 +804,7 @@ export function useChat({ onSendMessage, onActionClick }: UseChatProps = {}) {
               role: "assistant",
               content: assistantMessage.content,
               reasoning: assistantMessage.reasoning || null,
+              model: model || null,
               citations: (assistantMessage.citations as Json) || null,
             });
             if (!("error" in res2) && res2.data) {
@@ -960,6 +965,7 @@ export function useChat({ onSendMessage, onActionClick }: UseChatProps = {}) {
               role: "assistant",
               content: assistantMessage.content,
               reasoning: assistantMessage.reasoning || null,
+              model: model || null,
               citations: (assistantMessage.citations as Json) || null,
             });
             if (!("error" in res3) && res3.data) {
@@ -1010,6 +1016,7 @@ export function useChat({ onSendMessage, onActionClick }: UseChatProps = {}) {
           role: "assistant",
           content:
             "Sorry, I encountered an error while processing your message. Please try again.",
+          model: model || null,
         });
         await refreshMessages(sid);
       } finally {

@@ -24,3 +24,9 @@ See `.env.example`: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `CEREB
 - Fullpage `/workspace/chat/[id]` route (source app also lacked a working page; inset/floating only)
 - Job-market / profile tools from new-job-title (intentionally dropped)
 - Auth beyond local soft user id
+
+## Fixes since land
+
+- Persist `chat_messages.model` for assistant/user turns
+- OpenAI gpt-5.* uses `/v1/responses` so tools + `reasoning_effort` work together
+- Chat title generation: handle empty Cerebras content, raise token budget, fall back to Anthropic

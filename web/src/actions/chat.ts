@@ -117,6 +117,7 @@ export interface AddMessageParams {
   content: string;
   parentId?: string | null;
   reasoning?: string | null;
+  model?: string | null;
   context?: Json | null;
   functionResult?: Json | null;
   citations?: Json | null;

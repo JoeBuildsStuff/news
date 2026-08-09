@@ -18,6 +18,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: Date;
+  model?: string;
   reasoning?: string; // Reasoning steps from Cerebras API
   attachments?: Array<{
     id: string;

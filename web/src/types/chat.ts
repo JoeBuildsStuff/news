@@ -53,6 +53,7 @@ export interface ChatMessageRow {
   role: ChatRole
   content: string
   reasoning: string | null
+  model: string | null
   context: unknown | null
   function_result: unknown | null
   citations: unknown | null

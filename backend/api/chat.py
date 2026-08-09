@@ -67,6 +67,7 @@ class MessageCreate(BaseModel):
     content: str = ""
     parentId: str | None = None
     reasoning: str | None = None
+    model: str | None = None
     context: Any = None
     functionResult: Any = None
     citations: Any = None
@@ -79,7 +80,6 @@ class BranchUpdate(BaseModel):
     userMessageId: str
     activeIndex: int
     signature: str | None = None
-    signatures: list[str] | None = None
     signatures: list[str] | None = None
 
 

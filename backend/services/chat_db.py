@@ -85,6 +85,7 @@ def ensure_chat_schema(conn: sqlite3.Connection) -> None:
           role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
           content TEXT NOT NULL DEFAULT '',
           reasoning TEXT,
+          model TEXT,
           context TEXT,
           function_result TEXT,
           citations TEXT,
@@ -153,6 +154,11 @@ def ensure_chat_schema(conn: sqlite3.Connection) -> None:
           ON chat_branch_state(session_id);
         """
     )
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(chat_messages)").fetchall()
+    }
+    if "model" not in columns:
+        conn.execute("ALTER TABLE chat_messages ADD COLUMN model TEXT")
     conn.commit()
 
 
@@ -282,10 +288,10 @@ def add_message(conn: sqlite3.Connection, params: dict[str, Any]) -> dict[str, A
     message_id, created = str(uuid4()), _now()
     conn.execute(
         """INSERT INTO chat_messages
-           (id, session_id, parent_id, role, content, reasoning, context,
+           (id, session_id, parent_id, role, content, reasoning, model, context,
             function_result, citations, root_user_message_id, variant_group_id,
             variant_index, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             message_id,
             session_id,
@@ -293,6 +299,7 @@ def add_message(conn: sqlite3.Connection, params: dict[str, Any]) -> dict[str, A
             params["role"],
             params.get("content", ""),
             params.get("reasoning"),
+            params.get("model"),
             _json(params.get("context")),
             _json(params.get("functionResult")),
             _json(params.get("citations")),

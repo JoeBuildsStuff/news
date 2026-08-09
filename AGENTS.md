@@ -72,6 +72,8 @@ items(id, feed_id → feeds, guid, title, link, summary, published_at, fetched_a
   UNIQUE(feed_id, guid)
 x_accounts(username PK COLLATE NOCASE, user_id, resolved_at)  -- X only
 app_meta(key PK, value)  -- subscriptions_seeded
+chat_sessions / chat_messages(…, model, …) / chat_attachments / chat_tool_calls /
+  chat_suggested_actions / chat_branch_state  -- hub chat (same SQLite DB)
 ```
 
 ## Source-specific notes
