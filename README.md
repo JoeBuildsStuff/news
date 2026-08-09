@@ -103,7 +103,7 @@ Useful flags: `--feed openai`, `--delay 0.4`, `--include-x`.
 
 ### Browse in the browser (local hub)
 
-FastAPI over `data/feeds.db` + Vite timeline UI. Pollers stay separate CLIs. Use the gear icon → **Sources** to add/remove RSS or X subscriptions and toggle retweets.
+FastAPI over `data/feeds.db` + Vite timeline UI. Pollers stay separate CLIs. Use the gear icon → **Sources** to add/remove RSS or X subscriptions and toggle retweets, or ask the chat assistant to do the same.
 
 Terminal 1 — API:
 

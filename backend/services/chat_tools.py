@@ -13,18 +13,44 @@ import httpx
 
 from backend.config import DEFAULT_DB
 from backend.db import connect
+from backend.services import subscriptions as subs
 
 
 ToolResult = dict[str, Any]
 ToolContext = dict[str, Any]
 
+# Tools that mutate Sources; the web UI listens for these to refresh chips/panel.
+SOURCE_MUTATION_TOOLS = frozenset(
+    {
+        "news_add_subscription",
+        "news_update_subscription",
+        "news_unsubscribe",
+    }
+)
+
 SYSTEM_PROMPT = """You are the assistant for a personal AI-news hub.
 Help the user discover, understand, and compare AI-lab news stored in this hub.
-Use news_search for questions about stored articles, news_get_item when an item
-id is available, and news_list_feeds to explain available sources. Use live web
-tools only for current information not present in the local hub. Be explicit
-when information is from the local news database versus the live web. Cite
-article links when available, and never invent article contents."""
+You can also manage Sources (subscriptions) when the user asks.
+
+Read tools:
+- news_search for questions about stored articles
+- news_get_item when an item id is available
+- news_list_feeds for enabled sources on the timeline
+- news_list_subscriptions for all sources including disabled ones and X flags
+
+Source management (only when the user clearly asks):
+- news_add_subscription to add an RSS feed (name + url) or X account (name + username)
+- news_update_subscription to rename, change RSS url, re-enable, or toggle
+  exclude_retweets / exclude_replies on X accounts
+- news_unsubscribe to soft-disable a source (keeps history; stops polling)
+
+For "include retweets", set exclude_retweets=false. For "exclude retweets",
+set exclude_retweets=true. Prefer listing subscriptions first when the user
+names a source ambiguously so you use the correct feed id.
+Use live web tools only for current information not present in the local hub.
+Be explicit when information is from the local news database versus the live web.
+Cite article links when available, and never invent article contents.
+Confirm source changes you made (id, enabled, exclude flags) after mutating."""
 
 
 def _success(data: Any) -> ToolResult:
@@ -131,6 +157,144 @@ def news_list_feeds(
                WHERE f.enabled = 1 GROUP BY f.id ORDER BY f.name COLLATE NOCASE"""
         ).fetchall()
         return _success({"feeds": [dict(row) for row in rows]})
+    finally:
+        conn.close()
+
+
+def news_list_subscriptions(
+    _args: dict[str, Any], context: ToolContext | None = None
+) -> ToolResult:
+    conn = _connect(context)
+    try:
+        rows = subs.list_subscription_rows(conn)
+        return _success(
+            {"subscriptions": [subs.row_to_subscription(row) for row in rows]}
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _failure(f"List subscriptions failed: {exc}")
+    finally:
+        conn.close()
+
+
+def _as_bool(value: Any, *, default: bool | None = None) -> bool | None:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def news_add_subscription(
+    args: dict[str, Any], context: ToolContext | None = None
+) -> ToolResult:
+    kind = str(args.get("kind") or "").strip().lower()
+    if kind not in {"rss", "x"}:
+        return _failure("kind must be 'rss' or 'x'")
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return _failure("name is required")
+    if len(name) > 200:
+        return _failure("name must be 200 characters or fewer")
+
+    exclude_retweets = _as_bool(args.get("exclude_retweets"), default=False)
+    exclude_replies = _as_bool(args.get("exclude_replies"), default=True)
+    do_fetch = _as_bool(args.get("fetch_now"), default=True)
+    assert exclude_retweets is not None and exclude_replies is not None
+    assert do_fetch is not None
+
+    conn = _connect(context)
+    try:
+        subscription, fetch_error = subs.create_subscription(
+            conn,
+            kind=kind,  # type: ignore[arg-type]
+            name=name,
+            url=str(args["url"]) if args.get("url") is not None else None,
+            username=str(args["username"]) if args.get("username") is not None else None,
+            exclude_retweets=exclude_retweets,
+            exclude_replies=exclude_replies,
+            do_fetch_now=do_fetch,
+        )
+        data: dict[str, Any] = {"subscription": subscription}
+        if fetch_error:
+            data["fetch_error"] = fetch_error
+        return _success(data)
+    except subs.SubscriptionError as exc:
+        return _failure(exc.message)
+    except Exception as exc:  # noqa: BLE001
+        return _failure(f"Add subscription failed: {exc}")
+    finally:
+        conn.close()
+
+
+def news_update_subscription(
+    args: dict[str, Any], context: ToolContext | None = None
+) -> ToolResult:
+    feed_id = str(args.get("feed_id") or args.get("id") or "").strip()
+    if not feed_id:
+        return _failure("feed_id is required")
+
+    name = args.get("name")
+    url = args.get("url")
+    fields: dict[str, Any] = {}
+    if name is not None:
+        fields["name"] = str(name)
+    if url is not None:
+        fields["url"] = str(url)
+    if "enabled" in args:
+        enabled = _as_bool(args.get("enabled"))
+        if enabled is None:
+            return _failure("enabled must be a boolean")
+        fields["enabled"] = enabled
+    if "exclude_retweets" in args:
+        exclude_retweets = _as_bool(args.get("exclude_retweets"))
+        if exclude_retweets is None:
+            return _failure("exclude_retweets must be a boolean")
+        fields["exclude_retweets"] = exclude_retweets
+    if "exclude_replies" in args:
+        exclude_replies = _as_bool(args.get("exclude_replies"))
+        if exclude_replies is None:
+            return _failure("exclude_replies must be a boolean")
+        fields["exclude_replies"] = exclude_replies
+
+    if not fields:
+        return _failure(
+            "Provide at least one of: name, url, enabled, exclude_retweets, exclude_replies"
+        )
+
+    conn = _connect(context)
+    try:
+        subscription = subs.update_subscription(conn, feed_id, **fields)
+        return _success({"subscription": subscription})
+    except subs.SubscriptionError as exc:
+        return _failure(exc.message)
+    except Exception as exc:  # noqa: BLE001
+        return _failure(f"Update subscription failed: {exc}")
+    finally:
+        conn.close()
+
+
+def news_unsubscribe(
+    args: dict[str, Any], context: ToolContext | None = None
+) -> ToolResult:
+    feed_id = str(args.get("feed_id") or args.get("id") or "").strip()
+    if not feed_id:
+        return _failure("feed_id is required")
+    conn = _connect(context)
+    try:
+        subscription = subs.unsubscribe(conn, feed_id)
+        return _success({"subscription": subscription})
+    except subs.SubscriptionError as exc:
+        return _failure(exc.message)
+    except Exception as exc:  # noqa: BLE001
+        return _failure(f"Unsubscribe failed: {exc}")
     finally:
         conn.close()
 
@@ -452,9 +616,81 @@ available_tools: list[dict[str, Any]] = [
     ),
     _tool(
         "news_list_feeds",
-        "List enabled local news feeds and item counts.",
+        "List enabled local news feeds and item counts (timeline sources).",
         {},
         [],
+    ),
+    _tool(
+        "news_list_subscriptions",
+        "List all Sources including disabled ones, with kind and X exclude flags.",
+        {},
+        [],
+    ),
+    _tool(
+        "news_add_subscription",
+        "Add an RSS feed or X account subscription and optionally fetch now.",
+        {
+            "kind": {
+                "type": "string",
+                "enum": ["rss", "x"],
+                "description": "rss needs url; x needs username.",
+            },
+            "name": {"type": "string", "description": "Display name in Sources."},
+            "url": {"type": "string", "description": "RSS feed URL (required for rss)."},
+            "username": {
+                "type": "string",
+                "description": "X handle without @ (required for x).",
+            },
+            "exclude_retweets": {
+                "type": "boolean",
+                "description": "X only. true = exclude retweets (default false).",
+            },
+            "exclude_replies": {
+                "type": "boolean",
+                "description": "X only. true = exclude replies (default true).",
+            },
+            "fetch_now": {
+                "type": "boolean",
+                "description": "Poll once after create (default true).",
+            },
+        },
+        ["kind", "name"],
+    ),
+    _tool(
+        "news_update_subscription",
+        "Update a source: rename, RSS url, enabled, or X exclude_retweets/exclude_replies.",
+        {
+            "feed_id": {
+                "type": "string",
+                "description": "feeds.id from news_list_subscriptions.",
+            },
+            "name": {"type": "string"},
+            "url": {"type": "string", "description": "RSS only."},
+            "enabled": {
+                "type": "boolean",
+                "description": "true to resubscribe; false to soft-unsubscribe.",
+            },
+            "exclude_retweets": {
+                "type": "boolean",
+                "description": "X only. false means include retweets.",
+            },
+            "exclude_replies": {
+                "type": "boolean",
+                "description": "X only. false means include replies.",
+            },
+        },
+        ["feed_id"],
+    ),
+    _tool(
+        "news_unsubscribe",
+        "Soft-unsubscribe a source (enabled=false). History is kept.",
+        {
+            "feed_id": {
+                "type": "string",
+                "description": "feeds.id from news_list_subscriptions.",
+            },
+        },
+        ["feed_id"],
     ),
 ]
 
@@ -462,6 +698,10 @@ tool_executors: dict[str, Any] = {
     "news_search": news_search,
     "news_get_item": news_get_item,
     "news_list_feeds": news_list_feeds,
+    "news_list_subscriptions": news_list_subscriptions,
+    "news_add_subscription": news_add_subscription,
+    "news_update_subscription": news_update_subscription,
+    "news_unsubscribe": news_unsubscribe,
 }
 
 if _web_tools_backend():

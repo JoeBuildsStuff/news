@@ -29,7 +29,7 @@ news/
 │   ├── config.py            # repo ROOT, DEFAULT_DB, YAML paths, dotenv
 │   ├── db.py                # SQLite schema + upsert/list helpers
 │   ├── api/                 # hub + chat routers
-│   ├── services/            # chat_db, chat_providers, chat_tools
+│   ├── services/            # chat_db, chat_providers, chat_tools, subscriptions
 │   └── ingest/              # feeds, x, backfill, enrich CLIs
 ├── api.py                   # thin shim → backend.main
 ├── fetch_feeds.py           # thin shim → backend.ingest.feeds (+ re-exports)
@@ -101,6 +101,7 @@ chat_sessions / chat_messages(…, model, …) / chat_attachments / chat_tool_ca
 - FastAPI: `/api/health`, `/api/feeds` (enabled chips), `/api/subscriptions` CRUD, `/api/items`, `/api/items/{id}`.
 - Chat persistence and SSE provider routes live in `backend.api.chat` + `backend.services.chat_*`; same SQLite DB and `data/chat` storage root.
 - Chat providers are optional: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, or `CEREBRAS_API_KEY`; live web tools (`web_search` / `web_scrape`) use `JINA_API_KEY` (preferred) or `FIRECRAWL_API_KEY`.
+- Chat can manage Sources via tools: `news_list_subscriptions`, `news_add_subscription`, `news_update_subscription`, `news_unsubscribe` (shared `backend.services.subscriptions`; not gated by `NEWS_ADMIN_TOKEN`).
 - Optional `NEWS_ADMIN_TOKEN` gates subscription mutations.
 - UI Sources panel: add RSS/X, soft-unsubscribe, per-account include-retweets toggle.
 - Dev: API `:8000`, Vite `:5173` proxies `/api`.

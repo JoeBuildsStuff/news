@@ -30,3 +30,14 @@ See `.env.example`: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `CEREB
 - Persist `chat_messages.model` for assistant/user turns
 - OpenAI gpt-5.* uses `/v1/responses` so tools + `reasoning_effort` work together
 - Chat title generation: handle empty Cerebras content, raise token budget, fall back to Anthropic
+
+## Source management via chat (2026-08-08)
+
+Chat can manage Sources with the same DB helpers as the Sources panel (`backend.services.subscriptions`):
+
+- `news_list_subscriptions` — all feeds including disabled + X flags
+- `news_add_subscription` — RSS (`name` + `url`) or X (`name` + `username`)
+- `news_update_subscription` — rename / RSS url / `enabled` / `exclude_retweets` / `exclude_replies`
+- `news_unsubscribe` — soft-disable (keep history)
+
+Successful mutation tool results dispatch `news:subscriptions-changed` so timeline chips and an open Sources panel refresh. Note: chat mutations are not gated by `NEWS_ADMIN_TOKEN` (chat HTTP routes are open); use network exposure carefully.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from typing import Any, Literal
 
@@ -10,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.api.deps import auth_required, get_conn, require_admin
-from backend.db import fetch_one, upsert_feed
+from backend.services import subscriptions as subs
 
 router = APIRouter()
 
@@ -35,85 +34,6 @@ def row_to_item(row: sqlite3.Row, *, include_body: bool = False) -> dict[str, An
     else:
         item["has_body"] = bool(row["body_markdown"]) and row["body_status"] == "ok"
     return item
-
-
-def row_to_subscription(row: sqlite3.Row) -> dict[str, Any]:
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "url": row["url"],
-        "kind": row["kind"],
-        "enabled": bool(row["enabled"]),
-        "exclude_retweets": bool(row["exclude_retweets"]),
-        "exclude_replies": bool(row["exclude_replies"]),
-        "username": row["username"],
-        "last_fetched_at": row["last_fetched_at"],
-        "last_status": row["last_status"],
-        "last_error": row["last_error"],
-        "item_count": row["item_count"] if "item_count" in row.keys() else 0,
-    }
-
-
-def slugify(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return slug or "feed"
-
-
-def allocate_feed_id(conn: sqlite3.Connection, base: str) -> str:
-    candidate = base
-    n = 2
-    while conn.execute("SELECT 1 FROM feeds WHERE id = ?", (candidate,)).fetchone():
-        candidate = f"{base}-{n}"
-        n += 1
-    return candidate
-
-
-def get_subscription_row(conn: sqlite3.Connection, feed_id: str) -> sqlite3.Row | None:
-    return conn.execute(
-        """
-        SELECT
-            f.id, f.name, f.url, f.kind, f.enabled,
-            f.exclude_retweets, f.exclude_replies, f.username,
-            f.last_fetched_at, f.last_status, f.last_error,
-            COUNT(i.id) AS item_count
-        FROM feeds f
-        LEFT JOIN items i ON i.feed_id = f.id
-        WHERE f.id = ?
-        GROUP BY f.id
-        """,
-        (feed_id,),
-    ).fetchone()
-
-
-def fetch_now(conn: sqlite3.Connection, sub: dict[str, Any]) -> str | None:
-    """Best-effort one-shot poll so new subscriptions show data immediately."""
-    try:
-        if sub["kind"] == "rss":
-            fetch_one(
-                conn,
-                {"id": sub["id"], "name": sub["name"], "url": sub["url"], "kind": "rss"},
-            )
-            return None
-        from backend.ingest.x import ensure_x_schema, fetch_account, load_env, make_client
-
-        load_env()
-        ensure_x_schema(conn)
-        client = make_client()
-        fetch_account(
-            conn,
-            client,
-            {
-                "id": sub["id"],
-                "name": sub["name"],
-                "username": sub["username"],
-            },
-            max_results=10,
-            exclude_replies=bool(sub.get("exclude_replies", True)),
-            exclude_retweets=bool(sub.get("exclude_retweets", False)),
-        )
-        return None
-    except Exception as exc:  # noqa: BLE001 - create still succeeded
-        return str(exc)
 
 
 class SubscriptionCreate(BaseModel):
@@ -177,22 +97,10 @@ def list_feeds() -> dict[str, Any]:
 @router.get("/api/subscriptions")
 def list_subscriptions() -> dict[str, Any]:
     with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                f.id, f.name, f.url, f.kind, f.enabled,
-                f.exclude_retweets, f.exclude_replies, f.username,
-                f.last_fetched_at, f.last_status, f.last_error,
-                COUNT(i.id) AS item_count
-            FROM feeds f
-            LEFT JOIN items i ON i.feed_id = f.id
-            GROUP BY f.id
-            ORDER BY f.kind, f.name COLLATE NOCASE
-            """
-        ).fetchall()
+        rows = subs.list_subscription_rows(conn)
     return {
         "auth_required": auth_required(),
-        "subscriptions": [row_to_subscription(row) for row in rows],
+        "subscriptions": [subs.row_to_subscription(row) for row in rows],
     }
 
 
@@ -201,87 +109,20 @@ def create_subscription(
     body: SubscriptionCreate,
     _: None = Depends(require_admin),
 ) -> dict[str, Any]:
-    name = body.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="name is required")
-
-    if body.kind == "rss":
-        if not body.url or not body.url.strip():
-            raise HTTPException(status_code=400, detail="url is required for RSS")
-        url = body.url.strip()
-        username = None
-        feed_id = ""  # assigned inside the DB transaction
-    else:
-        if not body.username or not body.username.strip():
-            raise HTTPException(status_code=400, detail="username is required for X")
-        username = body.username.strip().lstrip("@")
-        url = f"https://x.com/{username}"
-        feed_id = f"x-{username.lower()}"
-
-    fetch_error: str | None = None
-    with get_conn() as conn:
-        if body.kind == "rss":
-            feed_id = allocate_feed_id(conn, slugify(name))
-        else:
-            existing = conn.execute(
-                "SELECT id FROM feeds WHERE id = ? OR (kind = 'x' AND username = ? COLLATE NOCASE)",
-                (feed_id, username),
-            ).fetchone()
-            if existing:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"X account already subscribed as {existing['id']}",
-                )
-
-        upsert_feed(
-            conn,
-            {
-                "id": feed_id,
-                "name": name,
-                "url": url,
-                "kind": body.kind,
-                "username": username,
-                "enabled": True,
-                "exclude_retweets": body.exclude_retweets,
-                "exclude_replies": body.exclude_replies,
-            },
-        )
-        # upsert_feed does not refresh exclude_* on conflict; force flags for create.
-        conn.execute(
-            """
-            UPDATE feeds
-            SET enabled = 1,
-                exclude_retweets = ?,
-                exclude_replies = ?,
-                kind = ?,
-                username = ?
-            WHERE id = ?
-            """,
-            (
-                1 if body.exclude_retweets else 0,
-                1 if body.exclude_replies else 0,
-                body.kind,
-                username,
-                feed_id,
-            ),
-        )
-        conn.commit()
-
-        sub = {
-            "id": feed_id,
-            "name": name,
-            "url": url,
-            "kind": body.kind,
-            "username": username,
-            "exclude_retweets": body.exclude_retweets,
-            "exclude_replies": body.exclude_replies,
-        }
-        if body.fetch_now:
-            fetch_error = fetch_now(conn, sub)
-
-        row = get_subscription_row(conn, feed_id)
-        assert row is not None
-        result = row_to_subscription(row)
+    try:
+        with get_conn() as conn:
+            result, fetch_error = subs.create_subscription(
+                conn,
+                kind=body.kind,
+                name=body.name,
+                url=body.url,
+                username=body.username,
+                exclude_retweets=body.exclude_retweets,
+                exclude_replies=body.exclude_replies,
+                do_fetch_now=body.fetch_now,
+            )
+    except subs.SubscriptionError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
 
     out: dict[str, Any] = {"subscription": result}
     if fetch_error:
@@ -295,53 +136,20 @@ def patch_subscription(
     body: SubscriptionPatch,
     _: None = Depends(require_admin),
 ) -> dict[str, Any]:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT id, kind FROM feeds WHERE id = ?", (feed_id,)
-        ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Subscription not found")
-
-        updates: list[str] = []
-        params: list[Any] = []
-        if body.name is not None:
-            updates.append("name = ?")
-            params.append(body.name.strip())
-        if body.url is not None:
-            if row["kind"] != "rss":
-                raise HTTPException(status_code=400, detail="url only applies to RSS")
-            updates.append("url = ?")
-            params.append(body.url.strip())
-        if body.enabled is not None:
-            updates.append("enabled = ?")
-            params.append(1 if body.enabled else 0)
-        if body.exclude_retweets is not None:
-            if row["kind"] != "x":
-                raise HTTPException(
-                    status_code=400, detail="exclude_retweets only applies to X"
-                )
-            updates.append("exclude_retweets = ?")
-            params.append(1 if body.exclude_retweets else 0)
-        if body.exclude_replies is not None:
-            if row["kind"] != "x":
-                raise HTTPException(
-                    status_code=400, detail="exclude_replies only applies to X"
-                )
-            updates.append("exclude_replies = ?")
-            params.append(1 if body.exclude_replies else 0)
-
-        if not updates:
-            raise HTTPException(status_code=400, detail="No fields to update")
-
-        params.append(feed_id)
-        conn.execute(
-            f"UPDATE feeds SET {', '.join(updates)} WHERE id = ?",
-            params,
-        )
-        conn.commit()
-        updated = get_subscription_row(conn, feed_id)
-        assert updated is not None
-        return {"subscription": row_to_subscription(updated)}
+    try:
+        with get_conn() as conn:
+            updated = subs.update_subscription(
+                conn,
+                feed_id,
+                name=body.name,
+                url=body.url,
+                enabled=body.enabled,
+                exclude_retweets=body.exclude_retweets,
+                exclude_replies=body.exclude_replies,
+            )
+    except subs.SubscriptionError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    return {"subscription": updated}
 
 
 @router.delete("/api/subscriptions/{feed_id}")
@@ -350,15 +158,12 @@ def delete_subscription(
     _: None = Depends(require_admin),
 ) -> dict[str, Any]:
     """Soft-disable: stop polling, keep history."""
-    with get_conn() as conn:
-        row = conn.execute("SELECT id FROM feeds WHERE id = ?", (feed_id,)).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Subscription not found")
-        conn.execute("UPDATE feeds SET enabled = 0 WHERE id = ?", (feed_id,))
-        conn.commit()
-        updated = get_subscription_row(conn, feed_id)
-        assert updated is not None
-        return {"subscription": row_to_subscription(updated)}
+    try:
+        with get_conn() as conn:
+            updated = subs.unsubscribe(conn, feed_id)
+    except subs.SubscriptionError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    return {"subscription": updated}
 
 
 @router.get("/api/items")

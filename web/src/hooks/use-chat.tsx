@@ -14,6 +14,13 @@ import {
   addChatToolCalls,
   getChatMessages,
 } from "@/actions/chat";
+import { notifySubscriptionsChanged } from "@/lib/subscriptions-events";
+
+const SOURCE_MUTATION_TOOLS = new Set([
+  "news_add_subscription",
+  "news_update_subscription",
+  "news_unsubscribe",
+]);
 
 // Define proper types for database responses
 interface ChatAttachmentRow {
@@ -209,6 +216,13 @@ function createToolStreamHandlers(
       const existing = toolCalls.find((t) => t.id === id);
       if (existing) existing.result = result;
       flush();
+      if (
+        existing &&
+        SOURCE_MUTATION_TOOLS.has(existing.name) &&
+        result?.success
+      ) {
+        notifySubscriptionsChanged();
+      }
     },
   };
 }

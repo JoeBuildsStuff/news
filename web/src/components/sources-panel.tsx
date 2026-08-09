@@ -10,6 +10,7 @@ import {
   setAdminToken,
   type Subscription,
 } from "@/api"
+import { SUBSCRIPTIONS_CHANGED_EVENT } from "@/lib/subscriptions-events"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -38,21 +39,47 @@ export function SourcesPanel({ onClose, onChanged }: SourcesPanelProps) {
 
   useEffect(() => {
     let cancelled = false
-    fetchSubscriptions()
-      .then((data) => {
-        if (cancelled) return
-        setSubs(data.subscriptions)
-        setAuthRequired(data.auth_required)
+
+    function load() {
+      fetchSubscriptions()
+        .then((data) => {
+          if (cancelled) return
+          setSubs(data.subscriptions)
+          setAuthRequired(data.auth_required)
+          setError(null)
+        })
+        .catch((err: Error) => {
+          if (!cancelled) setError(err.message)
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }
+
+    load()
+
+    const onSubscriptionsChanged = () => {
+      if (!cancelled) {
         setError(null)
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+        fetchSubscriptions()
+          .then((data) => {
+            if (cancelled) return
+            setSubs(data.subscriptions)
+            setAuthRequired(data.auth_required)
+          })
+          .catch((err: Error) => {
+            if (!cancelled) setError(err.message)
+          })
+      }
+    }
+    window.addEventListener(SUBSCRIPTIONS_CHANGED_EVENT, onSubscriptionsChanged)
+
     return () => {
       cancelled = true
+      window.removeEventListener(
+        SUBSCRIPTIONS_CHANGED_EVENT,
+        onSubscriptionsChanged
+      )
     }
   }, [])
 

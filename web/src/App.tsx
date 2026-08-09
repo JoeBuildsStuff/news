@@ -5,6 +5,7 @@ import { ExternalLinkIcon, SettingsIcon } from "lucide-react"
 import { fetchFeeds, fetchItem, fetchItems, type Feed, type Item } from "@/api"
 import { ModeToggle } from "@/components/mode-toggle"
 import { SourcesPanel } from "@/components/sources-panel"
+import { SUBSCRIPTIONS_CHANGED_EVENT } from "@/lib/subscriptions-events"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import {
@@ -58,6 +59,14 @@ export default function App() {
       })
       .catch((err: Error) => setError(err.message))
   }, [feedsTick])
+
+  useEffect(() => {
+    const onChanged = () => setFeedsTick((n) => n + 1)
+    window.addEventListener(SUBSCRIPTIONS_CHANGED_EVENT, onChanged)
+    return () => {
+      window.removeEventListener(SUBSCRIPTIONS_CHANGED_EVENT, onChanged)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
