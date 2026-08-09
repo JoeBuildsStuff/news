@@ -119,6 +119,8 @@ python api.py
 cd web && pnpm install && pnpm run dev
 # container:
 cp docker-compose.example.yml docker-compose.yml && docker compose up -d
+# one-time per clone (web lint on commit when web/ is staged):
+./scripts/install-git-hooks.sh
 ```
 
 ## Coding conventions
@@ -129,7 +131,9 @@ cp docker-compose.example.yml docker-compose.yml && docker compose up -d
 - Do not add Joe-specific Traefik/hostname config to this OSS repo.
 - New Python logic goes under `backend/`; keep root shims thin.
 - Web UI: run `cd web && pnpm run lint` before pushing; see `.cursor/rules/web-lint.mdc`
-  (Vite app — no Next.js eslint rules; keep CI Lint web green).
+  (Vite app — no Next.js eslint rules; keep CI Lint web green). After
+  `./scripts/install-git-hooks.sh`, commits that stage `web/` files run that lint
+  automatically.
 
 ## What not to do
 

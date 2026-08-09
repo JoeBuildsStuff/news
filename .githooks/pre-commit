@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Runs web eslint when staged changes touch web/.
+# Enable once per clone: ./scripts/install-git-hooks.sh
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+if ! git diff --cached --name-only --diff-filter=ACMR | grep -q '^web/'; then
+  exit 0
+fi
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "pre-commit: pnpm not found. Install pnpm, then retry the commit." >&2
+  exit 1
+fi
+
+if [[ ! -d web/node_modules ]]; then
+  echo "pre-commit: web/node_modules missing. Run: cd web && pnpm install" >&2
+  exit 1
+fi
+
+echo "pre-commit: linting web/ (staged web files detected)"
+(
+  cd web
+  pnpm run lint
+)

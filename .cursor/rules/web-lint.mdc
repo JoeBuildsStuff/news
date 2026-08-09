@@ -11,6 +11,7 @@ This app is **Vite + React**, not Next.js. CI runs `cd web && pnpm run lint`.
 ## Do
 
 - Run `pnpm run lint` in `web/` before pushing UI changes
+- Enable the local git hook once: `./scripts/install-git-hooks.sh` (runs web lint when `web/` files are staged)
 - Use plain `<img>` when needed — never `@next/next/*` eslint directives
 - Put co-located non-component exports (variants, hooks) in `components/ui/` (rule relaxed) or add a file-level `react-refresh/only-export-components` disable with a one-line reason
 - Prefer deriving UI state over `setState` at the top of `useEffect` (`react-hooks/set-state-in-effect`). Defer loading flags with `await Promise.resolve()` / async IIFE, or clear selection in event handlers
