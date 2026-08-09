@@ -61,8 +61,10 @@ services:
       - "ofelia.enabled=true"
       - "ofelia.job-exec.refresh.schedule=0 * * * *"
       - "ofelia.job-exec.refresh.command=python /app/scripts/refresh.py"
+      - "ofelia.job-exec.refresh.user=appuser"
       - "ofelia.job-exec.backfill.schedule=15 6 * * *"
       - "ofelia.job-exec.backfill.command=python /app/scripts/backfill_daily.py"
+      - "ofelia.job-exec.backfill.user=appuser"
 
   ofelia:
     image: mcuadros/ofelia:latest
