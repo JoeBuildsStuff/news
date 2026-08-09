@@ -59,7 +59,6 @@ export function AttachmentPreviewDialog({
               <ScrollArea className="max-h-[75vh] flex-1">
                 {canPreviewImage ? (
                   <div className="flex items-center justify-center p-4">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={imageSrc}
                       alt={attachment.name}

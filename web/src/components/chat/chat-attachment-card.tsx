@@ -69,7 +69,6 @@ export function ChatAttachmentCard({
         className="w-full rounded-t-[inherit] bg-accent"
       >
         {isImage ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={imageSrc}
             alt={attachment.name}

@@ -128,6 +128,8 @@ cp docker-compose.example.yml docker-compose.yml && docker compose up -d
 - Do not move ingest into FastAPI background tasks unless asked.
 - Do not add Joe-specific Traefik/hostname config to this OSS repo.
 - New Python logic goes under `backend/`; keep root shims thin.
+- Web UI: run `cd web && pnpm run lint` before pushing; see `.cursor/rules/web-lint.mdc`
+  (Vite app — no Next.js eslint rules; keep CI Lint web green).
 
 ## What not to do
 

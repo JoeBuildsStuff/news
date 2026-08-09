@@ -18,5 +18,16 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // Prefer a comment in empty catches over silent `catch {}`.
+      'no-empty': ['error', { allowEmptyCatch: false }],
+    },
+  },
+  // shadcn/ui files intentionally export component + variants (and sometimes hooks).
+  {
+    files: ['src/components/ui/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
   },
 ])

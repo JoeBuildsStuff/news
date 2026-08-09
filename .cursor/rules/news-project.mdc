@@ -1,0 +1,22 @@
+---
+description: Core conventions for the local news fetcher (RSS + X → SQLite)
+alwaysApply: true
+---
+
+# news project
+
+Local Python CLIs that upsert AI-lab news into `data/feeds.db`. Read `AGENTS.md` before structural changes.
+
+## Layout
+
+- Logic lives in `backend/` (`db.py`, `api/`, `services/`, `ingest/`)
+- Root `api.py`, `fetch_feeds.py`, `fetch_x.py`, `backfill.py`, `enrich.py` are thin shims
+
+## Hard rules
+
+- Keep one SQLite DB; upsert on `(feed_id, guid)`; do not introduce duplicate stores
+- Prefer extending `backend/` (shared `backend.db`, ingest adapters) over ORMs or extra UI layers unless asked
+- Treat feed `id` values as stable PKs — renaming needs a migration story
+- Secrets only in `.env.local` / `.env`; never commit `data/` or tokens
+- On user-facing changes (flags, env, schema, feeds), update `README.md` and `AGENTS.md`
+- Open ideas live in `docs/feature-requests/`; check there before overlapping work; update the FR when implementing or deciding

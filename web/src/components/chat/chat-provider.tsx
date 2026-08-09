@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable react-refresh/only-export-components -- provider + hooks co-located */
+
 import { createContext, useContext } from "react";
 import { useChatStore } from "@/lib/chat/chat-store";
 import type { ChatContextValue, ChatProviderProps } from "@/types/chat";

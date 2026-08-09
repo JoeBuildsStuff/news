@@ -386,7 +386,9 @@ export function useChat({ onSendMessage, onActionClick }: UseChatProps = {}) {
         formData.append("client_utc_offset", offset);
         formData.append("client_now_iso", localISO);
         formData.append("client_path", window.location.pathname || "");
-      } catch {}
+      } catch {
+        // Client timezone is optional metadata for the provider.
+      }
 
       // Add attachments if any
       if (attachments && attachments.length > 0) {
@@ -715,7 +717,9 @@ export function useChat({ onSendMessage, onActionClick }: UseChatProps = {}) {
                 "client_path",
                 window.location.pathname || ""
               );
-            } catch {}
+            } catch {
+        // Client timezone is optional metadata for the provider.
+      }
 
             // Add attachments if any
             if (attachments && attachments.length > 0) {
@@ -876,7 +880,9 @@ export function useChat({ onSendMessage, onActionClick }: UseChatProps = {}) {
                 "client_path",
                 window.location.pathname || ""
               );
-            } catch {}
+            } catch {
+        // Client timezone is optional metadata for the provider.
+      }
 
             // Add attachments if any
             if (attachments && attachments.length > 0) {

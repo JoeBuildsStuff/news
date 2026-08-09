@@ -61,30 +61,34 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError(null)
-    fetchItems({ limit: 80, feedId })
-      .then((data) => {
+
+    void (async () => {
+      // Defer state updates so we don't sync-setState in the effect body
+      // (react-hooks/set-state-in-effect).
+      await Promise.resolve()
+      if (cancelled) return
+      setLoading(true)
+      setError(null)
+      try {
+        const data = await fetchItems({ limit: 80, feedId })
         if (cancelled) return
         setItems(data.items)
         setTotal(data.total)
         setLoading(false)
-      })
-      .catch((err: Error) => {
+      } catch (err) {
         if (cancelled) return
-        setError(err.message)
+        setError(err instanceof Error ? err.message : String(err))
         setLoading(false)
-      })
+      }
+    })()
+
     return () => {
       cancelled = true
     }
   }, [feedId, feedsTick])
 
   useEffect(() => {
-    if (selectedId == null) {
-      setDetail(null)
-      return
-    }
+    if (selectedId == null) return
     let cancelled = false
     fetchItem(selectedId)
       .then((item) => {
@@ -98,11 +102,14 @@ export default function App() {
     }
   }, [selectedId])
 
+  const visibleDetail =
+    selectedId == null ? null : detail?.id === selectedId ? detail : null
+
   const body =
-    detail?.body_status === "ok" && detail.body_markdown
-      ? detail.body_markdown
-      : detail?.summary
-        ? stripHtml(detail.summary)
+    visibleDetail?.body_status === "ok" && visibleDetail.body_markdown
+      ? visibleDetail.body_markdown
+      : visibleDetail?.summary
+        ? stripHtml(visibleDetail.summary)
         : null
 
   return (
@@ -209,7 +216,7 @@ export default function App() {
         </section>
 
         <aside className="flex min-h-[40vh] flex-col md:min-h-[70vh]">
-          {!detail && (
+          {!visibleDetail && (
             <Empty className="border-0">
               <EmptyHeader>
                 <EmptyTitle>Select an item</EmptyTitle>
@@ -219,20 +226,20 @@ export default function App() {
               </EmptyHeader>
             </Empty>
           )}
-          {detail && (
+          {visibleDetail && (
             <article className="flex flex-col gap-4 p-4 md:p-6">
               <div className="flex flex-col gap-2">
                 <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
-                  {detail.feed_name}
+                  {visibleDetail.feed_name}
                 </p>
                 <h2 className="text-xl font-semibold tracking-tight text-balance md:text-2xl">
-                  {detail.title || "(no title)"}
+                  {visibleDetail.title || "(no title)"}
                 </h2>
                 <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
-                  <time>{formatWhen(detail.published_at ?? detail.fetched_at)}</time>
-                  {detail.link && (
+                  <time>{formatWhen(visibleDetail.published_at ?? visibleDetail.fetched_at)}</time>
+                  {visibleDetail.link && (
                     <a
-                      href={detail.link}
+                      href={visibleDetail.link}
                       target="_blank"
                       rel="noreferrer"
                       className={cn(buttonVariants({ variant: "link", size: "sm" }), "h-auto p-0")}
@@ -246,8 +253,8 @@ export default function App() {
               <Separator />
               {body ? (
                 <div className="typeset typeset-notes max-w-[42em]">
-                  {detail.body_status === "ok" && detail.body_markdown ? (
-                    <ReactMarkdown>{detail.body_markdown}</ReactMarkdown>
+                  {visibleDetail.body_status === "ok" && visibleDetail.body_markdown ? (
+                    <ReactMarkdown>{visibleDetail.body_markdown}</ReactMarkdown>
                   ) : (
                     <p>{body}</p>
                   )}

@@ -1,0 +1,23 @@
+---
+description: Vite React eslint guardrails for web/ — keep CI lint green
+globs: web/**/*.{ts,tsx,js,jsx}
+alwaysApply: false
+---
+
+# web lint conventions
+
+This app is **Vite + React**, not Next.js. CI runs `cd web && pnpm run lint`.
+
+## Do
+
+- Run `pnpm run lint` in `web/` before pushing UI changes
+- Use plain `<img>` when needed — never `@next/next/*` eslint directives
+- Put co-located non-component exports (variants, hooks) in `components/ui/` (rule relaxed) or add a file-level `react-refresh/only-export-components` disable with a one-line reason
+- Prefer deriving UI state over `setState` at the top of `useEffect` (`react-hooks/set-state-in-effect`). Defer loading flags with `await Promise.resolve()` / async IIFE, or clear selection in event handlers
+- Empty `catch` blocks need a comment: `catch { /* why ignored */ }`
+
+## Don't
+
+- Port Next.js-only eslint disables or `next/image` assumptions into this Vite app
+- Silence CI lint with broad `eslint-disable` at the top of unrelated files
+- Add new UI packages or Next layers under `web/` unless asked

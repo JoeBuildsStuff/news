@@ -118,6 +118,7 @@ Terminal 2 — UI (proxies `/api` to the API):
 ```bash
 cd web && pnpm install && pnpm run dev
 # http://127.0.0.1:5173
+# before pushing UI changes: pnpm run lint
 ```
 
 Useful API routes: `GET /api/health`, `/api/feeds`, `/api/subscriptions`, `/api/items?feed_id=openai`, `/api/items/{id}`; mutations `POST|PATCH|DELETE /api/subscriptions`. Chat sessions and provider SSE endpoints live under `/api/chat/*`; attachments use `/api/files/*` and `/api/images/*`.
