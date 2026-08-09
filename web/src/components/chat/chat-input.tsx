@@ -471,7 +471,7 @@ export function ChatInput() {
               >
                 <SelectTrigger
                   size="sm"
-                  className="w-fit border-none text-muted-foreground shadow-none font-light text-xs bg-input/40"
+                  className="h-6! w-fit border-none px-2 py-0 text-muted-foreground shadow-none font-light text-xs bg-input/40"
                 >
                   <SelectValue placeholder="Model">
                     {selectedModelLabel}
@@ -529,7 +529,7 @@ export function ChatInput() {
                 >
                   <SelectTrigger
                     size="sm"
-                    className="w-fit border-none text-muted-foreground shadow-none font-light text-xs bg-input/40"
+                    className="h-6! w-fit border-none px-2 py-0 text-muted-foreground shadow-none font-light text-xs bg-input/40"
                   >
                     <SelectValue placeholder="Reasoning" />
                   </SelectTrigger>
