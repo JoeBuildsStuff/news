@@ -87,6 +87,7 @@ def fetch_now(conn: sqlite3.Connection, sub: dict[str, Any]) -> str | None:
             fetch_one(
                 conn,
                 {"id": sub["id"], "name": sub["name"], "url": sub["url"], "kind": "rss"},
+                fill_images=8,
             )
             return None
         from backend.ingest.x import ensure_x_schema, fetch_account, load_env, make_client

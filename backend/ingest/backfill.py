@@ -21,6 +21,7 @@ import httpx
 
 from backend.config import DEFAULT_DB, USER_AGENT
 from backend.db import connect as feed_connect
+from backend.db import parse_share_image
 
 SITEMAP_URL = "https://www.anthropic.com/sitemap.xml"
 
@@ -157,12 +158,14 @@ def scrape_article(client: httpx.Client, url: str) -> dict | None:
         re.I,
     )
     summary = unescape(desc_match.group(1)).strip() if desc_match else None
+    image_url = parse_share_image(html, base=url.split("?")[0])
 
     return {
         "title": title,
         "link": url.split("?")[0],
         "summary": summary,
         "published_at": published,
+        "image_url": image_url,
     }
 
 
@@ -176,15 +179,25 @@ def upsert_item(conn: sqlite3.Connection, feed_id: str, item: dict) -> str:
     ).fetchone()
     conn.execute(
         """
-        INSERT INTO items (feed_id, guid, title, link, summary, published_at, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO items (feed_id, guid, title, link, summary, published_at, fetched_at, image_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(feed_id, guid) DO UPDATE SET
             title = excluded.title,
             link = excluded.link,
             summary = COALESCE(excluded.summary, items.summary),
-            published_at = excluded.published_at
+            published_at = excluded.published_at,
+            image_url = COALESCE(excluded.image_url, items.image_url)
         """,
-        (feed_id, guid, item["title"], item["link"], item["summary"], published, now),
+        (
+            feed_id,
+            guid,
+            item["title"],
+            item["link"],
+            item["summary"],
+            published,
+            now,
+            item.get("image_url"),
+        ),
     )
     return "updated" if existing else "inserted"
 

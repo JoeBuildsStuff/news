@@ -13,8 +13,16 @@ from backend.services import subscriptions as subs
 
 router = APIRouter()
 
+ITEM_SELECT = """
+    i.id, i.feed_id, f.name AS feed_name, i.guid,
+    i.title, i.link, i.summary, i.image_url, i.published_at, i.fetched_at,
+    i.body_status, i.body_markdown, i.body_fetched_at, i.body_error,
+    i.conversation_id
+"""
+
 
 def row_to_item(row: sqlite3.Row, *, include_body: bool = False) -> dict[str, Any]:
+    keys = row.keys()
     item: dict[str, Any] = {
         "id": row["id"],
         "feed_id": row["feed_id"],
@@ -23,10 +31,16 @@ def row_to_item(row: sqlite3.Row, *, include_body: bool = False) -> dict[str, An
         "title": row["title"],
         "link": row["link"],
         "summary": row["summary"],
+        "image_url": row["image_url"] if "image_url" in keys else None,
         "published_at": row["published_at"],
         "fetched_at": row["fetched_at"],
         "body_status": row["body_status"],
+        "conversation_id": row["conversation_id"] if "conversation_id" in keys else None,
     }
+    if "thread_count" in keys:
+        item["thread_count"] = int(row["thread_count"] or 1)
+    if "thread_latest" in keys:
+        item["thread_latest"] = row["thread_latest"]
     if include_body:
         item["body_markdown"] = row["body_markdown"]
         item["body_fetched_at"] = row["body_fetched_at"]
@@ -34,6 +48,25 @@ def row_to_item(row: sqlite3.Row, *, include_body: bool = False) -> dict[str, An
     else:
         item["has_body"] = bool(row["body_markdown"]) and row["body_status"] == "ok"
     return item
+
+
+def load_thread(conn: sqlite3.Connection, row: sqlite3.Row) -> list[dict[str, Any]]:
+    conversation_id = row["conversation_id"] if "conversation_id" in row.keys() else None
+    if not conversation_id:
+        return [row_to_item(row, include_body=True)]
+    siblings = conn.execute(
+        f"""
+        SELECT {ITEM_SELECT}
+        FROM items i
+        JOIN feeds f ON f.id = i.feed_id
+        WHERE i.feed_id = ? AND i.conversation_id = ?
+        ORDER BY COALESCE(i.published_at, i.fetched_at) ASC, CAST(i.guid AS INTEGER) ASC
+        """,
+        (row["feed_id"], conversation_id),
+    ).fetchall()
+    if not siblings:
+        return [row_to_item(row, include_body=True)]
+    return [row_to_item(sibling, include_body=True) for sibling in siblings]
 
 
 class SubscriptionCreate(BaseModel):
@@ -180,22 +213,48 @@ def list_items(
         params.append(feed_id)
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    keyed_sql = f"""
+        WITH keyed AS (
+            SELECT
+                {ITEM_SELECT},
+                CASE
+                    WHEN i.conversation_id IS NOT NULL AND i.conversation_id != ''
+                    THEN i.feed_id || ':' || i.conversation_id
+                    ELSE 'i:' || CAST(i.id AS TEXT)
+                END AS thread_key
+            FROM items i
+            JOIN feeds f ON f.id = i.feed_id
+            {where}
+        )
+    """
 
     with get_conn() as conn:
         total = conn.execute(
-            f"SELECT COUNT(*) FROM items i {where}",
+            f"{keyed_sql} SELECT COUNT(DISTINCT thread_key) FROM keyed",
             params,
         ).fetchone()[0]
         rows = conn.execute(
             f"""
-            SELECT
-                i.id, i.feed_id, f.name AS feed_name, i.guid,
-                i.title, i.link, i.summary, i.published_at, i.fetched_at,
-                i.body_status, i.body_markdown, i.body_fetched_at, i.body_error
-            FROM items i
-            JOIN feeds f ON f.id = i.feed_id
-            {where}
-            ORDER BY COALESCE(i.published_at, i.fetched_at) DESC
+            {keyed_sql},
+            ranked AS (
+                SELECT
+                    keyed.*,
+                    COUNT(*) OVER (PARTITION BY thread_key) AS thread_count,
+                    MAX(COALESCE(published_at, fetched_at)) OVER (
+                        PARTITION BY thread_key
+                    ) AS thread_latest,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY thread_key
+                        ORDER BY
+                            CASE WHEN guid = conversation_id THEN 0 ELSE 1 END,
+                            COALESCE(published_at, fetched_at) ASC,
+                            CAST(guid AS INTEGER) ASC
+                    ) AS rn
+                FROM keyed
+            )
+            SELECT * FROM ranked
+            WHERE rn = 1
+            ORDER BY thread_latest DESC
             LIMIT ? OFFSET ?
             """,
             [*params, limit, offset],
@@ -213,17 +272,18 @@ def list_items(
 def get_item(item_id: int) -> dict[str, Any]:
     with get_conn() as conn:
         row = conn.execute(
-            """
-            SELECT
-                i.id, i.feed_id, f.name AS feed_name, i.guid,
-                i.title, i.link, i.summary, i.published_at, i.fetched_at,
-                i.body_status, i.body_markdown, i.body_fetched_at, i.body_error
+            f"""
+            SELECT {ITEM_SELECT}
             FROM items i
             JOIN feeds f ON f.id = i.feed_id
             WHERE i.id = ?
             """,
             (item_id,),
         ).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return row_to_item(row, include_body=True)
+        if not row:
+            raise HTTPException(status_code=404, detail="Item not found")
+        thread = load_thread(conn, row)
+    item = row_to_item(row, include_body=True)
+    item["thread"] = thread
+    item["thread_count"] = len(thread)
+    return item

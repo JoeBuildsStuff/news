@@ -67,8 +67,8 @@ Open product/design ideas live under `docs/feature-requests/`. Read those before
 ```sql
 feeds(id PK, name, url, kind, enabled, exclude_retweets, exclude_replies, username,
       last_fetched_at, last_status, last_error)
-items(id, feed_id → feeds, guid, title, link, summary, published_at, fetched_at,
-      body_markdown, body_fetched_at, body_status, body_error)
+items(id, feed_id → feeds, guid, title, link, summary, image_url, conversation_id,
+      published_at, fetched_at, body_markdown, body_fetched_at, body_status, body_error)
   UNIQUE(feed_id, guid)
 x_accounts(username PK COLLATE NOCASE, user_id, resolved_at)  -- X only
 app_meta(key PK, value)  -- subscriptions_seeded
@@ -82,15 +82,18 @@ chat_sessions / chat_messages(…, model, …) / chat_attachments / chat_tool_ca
 
 - Polls enabled `kind='rss'` rows. `feeds.yaml` is a one-time seed only.
 - Anthropic community RSS mirrors are incomplete; backfill fills recent Anthropic news/engineering/research.
+- Stores `items.image_url` from RSS media/enclosures/HTML when present; otherwise fetches `og:image` for items that still lack one (`--fill-images`, default 25 per feed per run).
 
 ### X (`backend.ingest.x`)
 
 - Official `xdk` Client with bearer token; `since_id` after first store; `--days N` backfills.
 - Per-account `exclude_retweets` / `exclude_replies` from DB; CLI `--exclude-retweets` / `--include-replies` override for the run.
+- Stores `conversation_id` so same-author thread replies group in the hub. Existing rows without it are clustered once from near-simultaneous posts (retweets stay separate).
+- Requests `attachments.media_keys` and stores the first photo URL (or video preview) on `items.image_url`.
 
 ### Anthropic backfill (`backend.ingest.backfill`)
 
-- Sitemap scrape; default `--delay 0.4`.
+- Sitemap scrape; default `--delay 0.4`. Parses `og:image` from the same HTML as title/summary.
 
 ### Article body enrich (`backend.ingest.enrich`)
 
@@ -98,12 +101,14 @@ chat_sessions / chat_messages(…, model, …) / chat_attachments / chat_tool_ca
 
 ### Read hub (`backend.main` + `web/`)
 
-- FastAPI: `/api/health`, `/api/feeds` (enabled chips), `/api/subscriptions` CRUD, `/api/items`, `/api/items/{id}`.
+- FastAPI: `/api/health`, `/api/feeds` (enabled chips), `/api/subscriptions` CRUD, `/api/items` (X threads collapsed), `/api/items/{id}` (includes `thread` when grouped).
 - Chat persistence and SSE provider routes live in `backend.api.chat` + `backend.services.chat_*`; same SQLite DB and `data/chat` storage root.
 - Chat providers are optional: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, or `CEREBRAS_API_KEY`; live web tools (`web_search` / `web_scrape`) use `JINA_API_KEY` (preferred) or `FIRECRAWL_API_KEY`.
 - Chat can manage Sources via tools: `news_list_subscriptions`, `news_add_subscription`, `news_update_subscription`, `news_unsubscribe` (shared `backend.services.subscriptions`; not gated by `NEWS_ADMIN_TOKEN`).
 - Optional `NEWS_ADMIN_TOKEN` gates subscription mutations.
 - UI Sources panel: add RSS/X, soft-unsubscribe, per-account include-retweets toggle.
+- Timeline shows `image_url` thumbnails; the reader pane shows a hero when present.
+- Same-author X replies that share `conversation_id` are one timeline row with a thread badge; the reader lists posts in order.
 - Dev: API `:8000`, Vite `:5173` proxies `/api`.
 - Prod image: same process serves Vite build on `:3000` when `WEB_DIST` is set.
 

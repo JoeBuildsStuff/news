@@ -30,6 +30,7 @@ export type Item = {
   title: string | null
   link: string | null
   summary: string | null
+  image_url: string | null
   published_at: string | null
   fetched_at: string
   body_status: string | null
@@ -37,6 +38,10 @@ export type Item = {
   body_markdown?: string | null
   body_fetched_at?: string | null
   body_error?: string | null
+  conversation_id?: string | null
+  thread_count?: number
+  thread_latest?: string | null
+  thread?: Item[]
 }
 
 const ADMIN_TOKEN_KEY = "news_admin_token"

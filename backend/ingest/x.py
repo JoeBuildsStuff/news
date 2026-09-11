@@ -19,12 +19,23 @@ from backend.db import (
     list_enabled_subscriptions,
     list_recent,
     mark_feed,
+    normalize_image_url,
     seed_subscriptions,
     upsert_feed,
 )
 
 DEFAULT_CONFIG = DEFAULT_X_CONFIG
-POST_FIELDS = ["created_at", "author_id", "conversation_id", "lang", "public_metrics", "text"]
+POST_FIELDS = [
+    "created_at",
+    "author_id",
+    "conversation_id",
+    "lang",
+    "public_metrics",
+    "text",
+    "attachments",
+]
+MEDIA_FIELDS = ["url", "preview_image_url", "type", "media_key"]
+POST_EXPANSIONS = ["attachments.media_keys"]
 
 
 def load_accounts(path: Path) -> list[dict]:
@@ -127,16 +138,49 @@ def latest_post_id(conn: sqlite3.Connection, feed_id: str) -> str | None:
     return row["guid"] if row else None
 
 
+def _media_image_url(media: object) -> str | None:
+    url = getattr(media, "url", None) or getattr(media, "preview_image_url", None)
+    return normalize_image_url(url)
+
+
+def collect_media_urls(page: object) -> dict[str, str]:
+    out: dict[str, str] = {}
+    includes = getattr(page, "includes", None)
+    media_list = getattr(includes, "media", None) if includes is not None else None
+    if not media_list:
+        return out
+    for media in media_list:
+        key = getattr(media, "media_key", None)
+        url = _media_image_url(media)
+        if key and url:
+            out[str(key)] = url
+    return out
+
+
+def post_image_url(post: object, media_by_key: dict[str, str]) -> str | None:
+    attachments = getattr(post, "attachments", None)
+    keys = getattr(attachments, "media_keys", None) if attachments is not None else None
+    if not keys:
+        return None
+    for key in keys:
+        url = media_by_key.get(str(key))
+        if url:
+            return url
+    return None
+
+
 def store_posts(
     conn: sqlite3.Connection,
     *,
     feed_id: str,
     username: str,
     posts: list,
+    media_by_key: dict[str, str] | None = None,
 ) -> tuple[int, int]:
     now = datetime.now(timezone.utc).isoformat()
     inserted = 0
     updated = 0
+    media_by_key = media_by_key or {}
     for post in posts:
         post_id = str(post.id)
         text = getattr(post, "text", None) or ""
@@ -150,6 +194,8 @@ def store_posts(
 
         title = text.strip().split("\n", 1)[0][:180] or f"@{username} post"
         link = f"https://x.com/{username}/status/{post_id}"
+        image_url = post_image_url(post, media_by_key)
+        conversation_id = str(getattr(post, "conversation_id", None) or post_id)
 
         existing = conn.execute(
             "SELECT 1 FROM items WHERE feed_id = ? AND guid = ?",
@@ -158,15 +204,32 @@ def store_posts(
 
         conn.execute(
             """
-            INSERT INTO items (feed_id, guid, title, link, summary, published_at, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO items (
+                feed_id, guid, title, link, summary, published_at, fetched_at,
+                image_url, conversation_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(feed_id, guid) DO UPDATE SET
                 title = excluded.title,
                 link = excluded.link,
                 summary = excluded.summary,
-                published_at = COALESCE(excluded.published_at, items.published_at)
+                published_at = COALESCE(excluded.published_at, items.published_at),
+                image_url = COALESCE(excluded.image_url, items.image_url),
+                conversation_id = COALESCE(
+                    excluded.conversation_id, items.conversation_id
+                )
             """,
-            (feed_id, post_id, title, link, text, published, now),
+            (
+                feed_id,
+                post_id,
+                title,
+                link,
+                text,
+                published,
+                now,
+                image_url,
+                conversation_id,
+            ),
         )
         if existing:
             updated += 1
@@ -209,6 +272,8 @@ def fetch_account(
             "id": user_id,
             "max_results": max(5, min(max_results, 100)),
             "post_fields": POST_FIELDS,
+            "expansions": POST_EXPANSIONS,
+            "media_fields": MEDIA_FIELDS,
         }
         if exclude:
             kwargs["exclude"] = exclude
@@ -223,17 +288,23 @@ def fetch_account(
                 kwargs["since_id"] = since_id
 
         posts: list = []
+        media_by_key: dict[str, str] = {}
         pages = 0
         for page in client.users.get_posts(**kwargs):
             pages += 1
             if page.data:
                 posts.extend(page.data)
+            media_by_key.update(collect_media_urls(page))
             # Incremental polls only need the newest page.
             if days is None:
                 break
 
         inserted, updated = store_posts(
-            conn, feed_id=feed["id"], username=username, posts=posts
+            conn,
+            feed_id=feed["id"],
+            username=username,
+            posts=posts,
+            media_by_key=media_by_key,
         )
         mark_feed(conn, feed["id"], status="ok" if days is None else "backfill-ok")
         conn.commit()

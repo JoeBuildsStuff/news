@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import sys
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from html import unescape
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 import feedparser
 import httpx
@@ -81,6 +84,8 @@ def connect(db_path: Path, *, seed: bool = True) -> sqlite3.Connection:
             body_fetched_at TEXT,
             body_status TEXT,
             body_error TEXT,
+            image_url TEXT,
+            conversation_id TEXT,
             UNIQUE(feed_id, guid)
         );
 
@@ -94,6 +99,8 @@ def connect(db_path: Path, *, seed: bool = True) -> sqlite3.Connection:
         """
     )
     ensure_body_columns(conn)
+    ensure_image_column(conn)
+    ensure_conversation_column(conn)
     ensure_subscription_columns(conn)
     from backend.services.chat_db import ensure_chat_schema
 
@@ -122,6 +129,114 @@ def ensure_body_columns(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+
+
+def ensure_image_column(conn: sqlite3.Connection) -> None:
+    """Migrate existing DBs created before items.image_url existed."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+    if "image_url" not in existing:
+        conn.execute("ALTER TABLE items ADD COLUMN image_url TEXT")
+        conn.commit()
+
+
+def ensure_conversation_column(conn: sqlite3.Connection) -> None:
+    """X conversation_id so same-author thread replies can group in the hub."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+    if "conversation_id" not in existing:
+        conn.execute("ALTER TABLE items ADD COLUMN conversation_id TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_items_conversation
+            ON items(feed_id, conversation_id)
+        """
+    )
+    infer_x_conversation_ids(conn)
+    conn.commit()
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _looks_like_retweet(title: str | None) -> bool:
+    return (title or "").lstrip().startswith("RT @")
+
+
+def infer_x_conversation_ids(conn: sqlite3.Connection) -> None:
+    """Fill missing X conversation_id values from same-author posting bursts.
+
+    Existing rows were stored without conversation_id. Brand threads are
+    posted a few seconds apart; cluster those (skip retweets) so the hub
+    can group them before the next fetch_x run overwrites with API ids.
+    """
+    infer_meta_key = "x_conversation_infer"
+    infer_version = "2"
+    current = _meta_get(conn, infer_meta_key)
+    if current != infer_version and current in {None, "1"}:
+        conn.execute(
+            """
+            UPDATE items
+            SET conversation_id = NULL
+            WHERE feed_id IN (SELECT id FROM feeds WHERE kind = 'x')
+            """
+        )
+
+    pending = conn.execute(
+        """
+        SELECT 1
+        FROM items i
+        JOIN feeds f ON f.id = i.feed_id
+        WHERE f.kind = 'x'
+          AND (i.conversation_id IS NULL OR i.conversation_id = '')
+        LIMIT 1
+        """
+    ).fetchone()
+    if not pending and current == infer_version:
+        return
+
+    burst_seconds = 15
+    feeds = conn.execute("SELECT id FROM feeds WHERE kind = 'x'").fetchall()
+    for feed in feeds:
+        rows = conn.execute(
+            """
+            SELECT id, guid, title, published_at
+            FROM items
+            WHERE feed_id = ?
+              AND (conversation_id IS NULL OR conversation_id = '')
+            ORDER BY COALESCE(published_at, fetched_at) ASC,
+                     CAST(guid AS INTEGER) ASC
+            """,
+            (feed["id"],),
+        ).fetchall()
+        last_ts: datetime | None = None
+        last_was_rt = True
+        root_guid: str | None = None
+        for row in rows:
+            is_rt = _looks_like_retweet(row["title"])
+            ts = _parse_iso(row["published_at"])
+            join = (
+                not is_rt
+                and not last_was_rt
+                and root_guid is not None
+                and ts is not None
+                and last_ts is not None
+                and (ts - last_ts).total_seconds() <= burst_seconds
+            )
+            conversation_id = root_guid if join else row["guid"]
+            if not join:
+                root_guid = None if is_rt else row["guid"]
+            conn.execute(
+                "UPDATE items SET conversation_id = ? WHERE id = ?",
+                (conversation_id, row["id"]),
+            )
+            last_ts = ts
+            last_was_rt = is_rt
+    _meta_set(conn, infer_meta_key, infer_version)
 
 
 def ensure_subscription_columns(conn: sqlite3.Connection) -> None:
@@ -278,6 +393,166 @@ def item_guid(entry: feedparser.FeedParserDict) -> str:
     return f"{title}|{published}"
 
 
+_IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif")
+_META_TAG_RE = re.compile(r"<meta\b([^>]+)>", re.I)
+_ATTR_RE = re.compile(r'([^\s=]+)\s*=\s*["\']([^"\']+)["\']', re.I)
+_IMG_TAG_RE = re.compile(r"<img\b([^>]+)>", re.I)
+_SHARE_IMAGE_KEYS = ("og:image", "og:image:url", "twitter:image", "twitter:image:src")
+
+
+def normalize_image_url(value: object, *, base: str | None = None) -> str | None:
+    """Keep http(s) image URLs only; resolve relative paths against base."""
+    if not value:
+        return None
+    url = unescape(str(value)).strip()
+    if not url or url.startswith("data:"):
+        return None
+    if base:
+        url = urljoin(base, url)
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return url
+
+
+def _looks_like_image(url: str, *, type_: str | None = None, medium: str | None = None) -> bool:
+    if medium and medium.lower() == "image":
+        return True
+    if type_:
+        lowered = type_.lower()
+        if lowered.startswith("image/") or lowered == "image":
+            return True
+    path = urlparse(url).path.lower()
+    return path.endswith(_IMAGE_EXT)
+
+
+def _as_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_share_image(html: str, *, base: str | None = None) -> str | None:
+    """og:image / twitter:image from article HTML."""
+    found: dict[str, str] = {}
+    for attrs_raw in _META_TAG_RE.findall(html):
+        attrs = {key.lower(): val for key, val in _ATTR_RE.findall(attrs_raw)}
+        key = (attrs.get("property") or attrs.get("name") or "").lower()
+        content = attrs.get("content")
+        if key in _SHARE_IMAGE_KEYS and content:
+            found[key] = content
+    for key in _SHARE_IMAGE_KEYS:
+        if key in found:
+            url = normalize_image_url(found[key], base=base)
+            if url:
+                return url
+    return None
+
+
+def _html_img_src(html: str, *, base: str | None = None) -> str | None:
+    for attrs_raw in _IMG_TAG_RE.findall(html):
+        attrs = {key.lower(): val for key, val in _ATTR_RE.findall(attrs_raw)}
+        src = attrs.get("src")
+        if not src:
+            continue
+        width = _as_int(attrs.get("width"))
+        height = _as_int(attrs.get("height"))
+        if width is not None and width <= 2:
+            continue
+        if height is not None and height <= 2:
+            continue
+        url = normalize_image_url(src, base=base)
+        if url and _looks_like_image(url, type_=attrs.get("type")):
+            return url
+        if url and not _looks_like_image(url):
+            # CDN paths often omit an extension; still accept http(s) img src.
+            return url
+    return None
+
+
+def _dict_image_url(item: object, *, base: str | None = None) -> str | None:
+    if isinstance(item, str):
+        return normalize_image_url(item, base=base)
+    if not isinstance(item, dict):
+        return None
+    type_ = str(item.get("type") or "") or None
+    medium = str(item.get("medium") or "") or None
+    raw = item.get("url") or item.get("href") or item.get("src")
+    url = normalize_image_url(raw, base=base)
+    if not url:
+        return None
+    if medium and medium.lower() == "video":
+        return None
+    if type_ or medium:
+        return url if _looks_like_image(url, type_=type_, medium=medium) else None
+    return url
+
+
+def entry_image_url(entry: feedparser.FeedParserDict) -> str | None:
+    """Best image from RSS media/enclosures/HTML; no extra HTTP."""
+    base = str(entry.get("link") or "") or None
+    media_items = [item for item in (entry.get("media_content") or []) if isinstance(item, dict)]
+    media_items.sort(key=lambda item: _as_int(item.get("width")) or 0, reverse=True)
+    for item in media_items:
+        url = _dict_image_url(item, base=base)
+        if url:
+            return url
+    for item in entry.get("media_thumbnail") or []:
+        url = _dict_image_url(item, base=base)
+        if url:
+            return url
+    image = entry.get("image")
+    if isinstance(image, dict):
+        url = _dict_image_url(image, base=base)
+        if url:
+            return url
+    for item in entry.get("enclosures") or []:
+        url = _dict_image_url(item, base=base)
+        if url:
+            return url
+    for item in entry.get("links") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("rel") or "").lower() != "enclosure":
+            continue
+        url = _dict_image_url(item, base=base)
+        if url:
+            return url
+    html_chunks: list[str] = []
+    for block in entry.get("content") or []:
+        if isinstance(block, dict) and block.get("value"):
+            html_chunks.append(str(block["value"]))
+    for key in ("summary", "description"):
+        val = entry.get(key)
+        if val:
+            html_chunks.append(str(val))
+    for html in html_chunks:
+        url = _html_img_src(html, base=base)
+        if url:
+            return url
+    return None
+
+
+def fetch_og_image(client: httpx.Client, url: str) -> str | None:
+    """One HTML GET for og:image. Failures are per-URL, not fatal."""
+    try:
+        response = client.get(
+            url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+            },
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        return parse_share_image(response.text, base=str(response.url))
+    except (httpx.HTTPError, OSError):
+        return None
+
+
 def fetch_feed(url: str, timeout: float = 30.0) -> bytes:
     headers = {
         "User-Agent": USER_AGENT,
@@ -324,46 +599,82 @@ def upsert_feed(conn: sqlite3.Connection, feed: dict) -> None:
     )
 
 
-def store_items(conn: sqlite3.Connection, feed_id: str, entries: list) -> tuple[int, int]:
+def store_items(
+    conn: sqlite3.Connection,
+    feed_id: str,
+    entries: list,
+    *,
+    fill_images: int = 0,
+    image_delay: float = 0.2,
+) -> tuple[int, int, int]:
     now = datetime.now(timezone.utc).isoformat()
     inserted = 0
     updated = 0
-    for entry in entries:
-        guid = item_guid(entry)
-        published = parse_date(entry.get("published_parsed") or entry.get("updated_parsed"))
-        if not published:
-            published = parse_date(entry.get("published") or entry.get("updated"))
+    og_filled = 0
+    budget = max(0, fill_images)
+    client: httpx.Client | None = None
+    try:
+        for entry in entries:
+            guid = item_guid(entry)
+            published = parse_date(entry.get("published_parsed") or entry.get("updated_parsed"))
+            if not published:
+                published = parse_date(entry.get("published") or entry.get("updated"))
+            link = entry.get("link")
+            summary = entry.get("summary") or entry.get("description")
 
-        existing = conn.execute(
-            "SELECT 1 FROM items WHERE feed_id = ? AND guid = ?",
-            (feed_id, guid),
-        ).fetchone()
+            existing = conn.execute(
+                "SELECT image_url FROM items WHERE feed_id = ? AND guid = ?",
+                (feed_id, guid),
+            ).fetchone()
 
-        conn.execute(
-            """
-            INSERT INTO items (feed_id, guid, title, link, summary, published_at, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(feed_id, guid) DO UPDATE SET
-                title = excluded.title,
-                link = excluded.link,
-                summary = excluded.summary,
-                published_at = COALESCE(excluded.published_at, items.published_at)
-            """,
-            (
-                feed_id,
-                guid,
-                entry.get("title"),
-                entry.get("link"),
-                entry.get("summary") or entry.get("description"),
-                published,
-                now,
-            ),
-        )
-        if existing:
-            updated += 1
-        else:
-            inserted += 1
-    return inserted, updated
+            image_url = entry_image_url(entry)
+            if not image_url and existing and existing["image_url"]:
+                image_url = existing["image_url"]
+            elif not image_url and budget > 0 and link:
+                if client is None:
+                    client = httpx.Client(
+                        follow_redirects=True,
+                        timeout=20.0,
+                        headers={"User-Agent": USER_AGENT},
+                    )
+                image_url = fetch_og_image(client, str(link))
+                budget -= 1
+                og_filled += 1 if image_url else 0
+                if image_delay > 0:
+                    time.sleep(image_delay)
+
+            conn.execute(
+                """
+                INSERT INTO items (
+                    feed_id, guid, title, link, summary, published_at, fetched_at, image_url
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(feed_id, guid) DO UPDATE SET
+                    title = excluded.title,
+                    link = excluded.link,
+                    summary = excluded.summary,
+                    published_at = COALESCE(excluded.published_at, items.published_at),
+                    image_url = COALESCE(excluded.image_url, items.image_url)
+                """,
+                (
+                    feed_id,
+                    guid,
+                    entry.get("title"),
+                    link,
+                    summary,
+                    published,
+                    now,
+                    image_url,
+                ),
+            )
+            if existing:
+                updated += 1
+            else:
+                inserted += 1
+    finally:
+        if client is not None:
+            client.close()
+    return inserted, updated, og_filled
 
 
 def mark_feed(
@@ -383,7 +694,13 @@ def mark_feed(
     )
 
 
-def fetch_one(conn: sqlite3.Connection, feed: dict) -> None:
+def fetch_one(
+    conn: sqlite3.Connection,
+    feed: dict,
+    *,
+    fill_images: int = 25,
+    image_delay: float = 0.2,
+) -> None:
     payload = {**feed, "kind": feed.get("kind") or "rss"}
     upsert_feed(conn, payload)
     print(f"→ {feed['id']}: {feed['url']}")
@@ -392,10 +709,20 @@ def fetch_one(conn: sqlite3.Connection, feed: dict) -> None:
         parsed = feedparser.parse(raw)
         if getattr(parsed, "bozo", False) and not parsed.entries:
             raise RuntimeError(f"Failed to parse feed: {parsed.get('bozo_exception')}")
-        inserted, updated = store_items(conn, feed["id"], parsed.entries)
+        inserted, updated, og_filled = store_items(
+            conn,
+            feed["id"],
+            parsed.entries,
+            fill_images=fill_images,
+            image_delay=image_delay,
+        )
         mark_feed(conn, feed["id"], status="ok")
         conn.commit()
-        print(f"  ok — {len(parsed.entries)} entries ({inserted} new, {updated} updated)")
+        extra = f", {og_filled} images" if og_filled else ""
+        print(
+            f"  ok — {len(parsed.entries)} entries "
+            f"({inserted} new, {updated} updated{extra})"
+        )
     except Exception as exc:  # noqa: BLE001 - surface fetch errors per feed
         mark_feed(conn, feed["id"], status="error", error=str(exc))
         conn.commit()

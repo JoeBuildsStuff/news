@@ -57,7 +57,10 @@ Polls enabled `kind=rss` rows in SQLite (seeded once from `feeds.yaml`):
 
 ```bash
 python fetch_feeds.py
+python fetch_feeds.py --fill-images 200   # backfill og:image for items whose RSS has no media
 ```
+
+OpenAI and Anthropic RSS entries are text teasers (no enclosures). Missing `image_url` values are filled from each article’s `og:image`, capped per feed per run (`--fill-images`, default 25) so hourly polls stay light. Re-run with a higher cap to catch up. User-added feeds that already include `media:content` / enclosures skip the extra page fetch.
 
 ### Fetch X posts
 
@@ -67,7 +70,7 @@ Polls enabled `kind=x` rows in SQLite (seeded once from `x_accounts.yaml`):
 python fetch_x.py
 ```
 
-After the first run, polls use `since_id` so you mostly pay for new posts. User IDs are resolved once and cached in `x_accounts`. Per-account retweet/reply exclusions come from the DB; CLI flags override for that run.
+After the first run, polls use `since_id` so you mostly pay for new posts. User IDs are resolved once and cached in `x_accounts`. Per-account retweet/reply exclusions come from the DB; CLI flags override for that run. Same-author thread replies share `conversation_id` and collapse to one row in the hub timeline.
 
 Backfill recent posts (paginates; ignores `since_id`):
 
@@ -103,7 +106,7 @@ Useful flags: `--feed openai`, `--delay 0.4`, `--include-x`.
 
 ### Browse in the browser (local hub)
 
-FastAPI over `data/feeds.db` + Vite timeline UI. Pollers stay separate CLIs. Use the gear icon → **Sources** to add/remove RSS or X subscriptions and toggle retweets, or ask the chat assistant to do the same.
+FastAPI over `data/feeds.db` + Vite timeline UI. Pollers stay separate CLIs. Use the gear icon → **Sources** to add/remove RSS or X subscriptions and toggle retweets, or ask the chat assistant to do the same. X posts from the same account that belong to one conversation show as a single timeline row; open it to read the thread.
 
 Terminal 1 — API:
 
@@ -159,6 +162,8 @@ When `NEWS_ADMIN_TOKEN` is set, Sources mutations need `Authorization: Bearer �
 feeds        — subscriptions (RSS or X): kind, enabled, exclude_retweets,
                exclude_replies, username + fetch status columns
 items        — articles/posts; UNIQUE(feed_id, guid)
+             — optional image_url (RSS media, X photo, or og:image)
+             — optional conversation_id (X threads; hub groups on this)
              — optional body_markdown / body_status from enrich.py
 x_accounts   — username → user_id cache for the X API
 app_meta     — one-time seed flag (subscriptions_seeded)

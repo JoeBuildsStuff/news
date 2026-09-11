@@ -3,10 +3,13 @@ import ReactMarkdown from "react-markdown"
 import { ExternalLinkIcon, SettingsIcon } from "lucide-react"
 
 import { fetchFeeds, fetchItem, fetchItems, type Feed, type Item } from "@/api"
+import { ItemImage } from "@/components/item-image"
+import { ItemThread } from "@/components/item-thread"
 import { ModeToggle } from "@/components/mode-toggle"
 import { SourcesPanel } from "@/components/sources-panel"
 import { SUBSCRIPTIONS_CHANGED_EVENT } from "@/lib/subscriptions-events"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Empty,
@@ -114,6 +117,11 @@ export default function App() {
   const visibleDetail =
     selectedId == null ? null : detail?.id === selectedId ? detail : null
 
+  const threadPosts =
+    visibleDetail?.thread && visibleDetail.thread.length > 1
+      ? visibleDetail.thread
+      : null
+
   const body =
     visibleDetail?.body_status === "ok" && visibleDetail.body_markdown
       ? visibleDetail.body_markdown
@@ -185,27 +193,46 @@ export default function App() {
             <ul className="flex flex-col">
               {items.map((item) => {
                 const active = item.id === selectedId
+                const threadCount = item.thread_count ?? 1
                 return (
                   <li key={item.id} className="border-b border-border last:border-b-0">
                     <button
                       type="button"
                       onClick={() => setSelectedId(item.id)}
                       className={cn(
-                        "hover:bg-muted/60 flex w-full cursor-pointer flex-col gap-1 px-3 py-3 text-left transition-colors",
+                        "hover:bg-muted/60 flex w-full cursor-pointer items-start gap-3 px-3 py-3 text-left transition-colors",
                         active && "bg-muted"
                       )}
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground text-[11px] tracking-wide uppercase">
-                          {item.feed_name}
+                      <div className="flex min-w-0 flex-1 flex-col gap-1">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-muted-foreground text-[11px] tracking-wide uppercase">
+                            {item.feed_name}
+                          </span>
+                          <time className="text-muted-foreground shrink-0 text-xs">
+                            {formatWhen(
+                              item.thread_latest ??
+                                item.published_at ??
+                                item.fetched_at
+                            )}
+                          </time>
+                        </div>
+                        <span className="text-sm leading-snug font-medium">
+                          {item.title || "(no title)"}
                         </span>
-                        <time className="text-muted-foreground shrink-0 text-xs">
-                          {formatWhen(item.published_at ?? item.fetched_at)}
-                        </time>
+                        {threadCount > 1 && (
+                          <Badge variant="secondary" className="w-fit">
+                            {threadCount} posts
+                          </Badge>
+                        )}
                       </div>
-                      <span className="text-sm leading-snug font-medium">
-                        {item.title || "(no title)"}
-                      </span>
+                      {item.image_url && (
+                        <ItemImage
+                          src={item.image_url}
+                          alt=""
+                          className="bg-muted size-14 shrink-0 rounded-md object-cover"
+                        />
+                      )}
                     </button>
                   </li>
                 )
@@ -238,40 +265,74 @@ export default function App() {
           {visibleDetail && (
             <article className="flex flex-col gap-4 p-4 md:p-6">
               <div className="flex flex-col gap-2">
-                <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
-                  {visibleDetail.feed_name}
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
+                    {visibleDetail.feed_name}
+                  </p>
+                  {threadPosts && (
+                    <Badge variant="secondary">
+                      {threadPosts.length} posts
+                    </Badge>
+                  )}
+                </div>
                 <h2 className="text-xl font-semibold tracking-tight text-balance md:text-2xl">
                   {visibleDetail.title || "(no title)"}
                 </h2>
-                <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
-                  <time>{formatWhen(visibleDetail.published_at ?? visibleDetail.fetched_at)}</time>
-                  {visibleDetail.link && (
-                    <a
-                      href={visibleDetail.link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={cn(buttonVariants({ variant: "link", size: "sm" }), "h-auto p-0")}
-                    >
-                      Open original
-                      <ExternalLinkIcon data-icon="inline-end" />
-                    </a>
-                  )}
-                </div>
+                {!threadPosts && (
+                  <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
+                    <time>
+                      {formatWhen(
+                        visibleDetail.published_at ?? visibleDetail.fetched_at
+                      )}
+                    </time>
+                    {visibleDetail.link && (
+                      <a
+                        href={visibleDetail.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={cn(
+                          buttonVariants({ variant: "link", size: "sm" }),
+                          "h-auto p-0"
+                        )}
+                      >
+                        Open original
+                        <ExternalLinkIcon data-icon="inline-end" />
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
-              <Separator />
-              {body ? (
-                <div className="typeset typeset-notes max-w-[42em]">
-                  {visibleDetail.body_status === "ok" && visibleDetail.body_markdown ? (
-                    <ReactMarkdown>{visibleDetail.body_markdown}</ReactMarkdown>
-                  ) : (
-                    <p>{body}</p>
-                  )}
-                </div>
+              {threadPosts ? (
+                <>
+                  <Separator />
+                  <ItemThread posts={threadPosts} />
+                </>
               ) : (
-                <p className="text-muted-foreground text-sm">
-                  No body stored. Run enrich.py or open the original link.
-                </p>
+                <>
+                  {visibleDetail.image_url && (
+                    <ItemImage
+                      key={visibleDetail.id}
+                      src={visibleDetail.image_url}
+                      alt=""
+                      className="bg-muted aspect-video w-full rounded-lg object-cover"
+                    />
+                  )}
+                  <Separator />
+                  {body ? (
+                    <div className="typeset typeset-notes max-w-[42em]">
+                      {visibleDetail.body_status === "ok" &&
+                      visibleDetail.body_markdown ? (
+                        <ReactMarkdown>{visibleDetail.body_markdown}</ReactMarkdown>
+                      ) : (
+                        <p>{body}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground text-sm">
+                      No body stored. Run enrich.py or open the original link.
+                    </p>
+                  )}
+                </>
               )}
             </article>
           )}

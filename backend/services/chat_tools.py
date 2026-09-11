@@ -94,7 +94,7 @@ def news_search(args: dict[str, Any], context: ToolContext | None = None) -> Too
     try:
         rows = conn.execute(
             f"""SELECT i.id, i.feed_id, f.name AS feed_name, i.title, i.link,
-                       i.summary, i.published_at, i.body_status
+                       i.summary, i.image_url, i.published_at, i.body_status
                 FROM items i JOIN feeds f ON f.id = i.feed_id
                 WHERE {where}
                 ORDER BY COALESCE(i.published_at, i.fetched_at) DESC
@@ -112,6 +112,7 @@ def news_search(args: dict[str, Any], context: ToolContext | None = None) -> Too
                         "title": row["title"],
                         "link": row["link"],
                         "summary": row["summary"],
+                        "image_url": row["image_url"],
                         "published_at": row["published_at"],
                         "body_status": row["body_status"],
                     }
@@ -134,7 +135,7 @@ def news_get_item(args: dict[str, Any], context: ToolContext | None = None) -> T
     try:
         row = conn.execute(
             """SELECT i.id, i.feed_id, f.name AS feed_name, i.guid, i.title, i.link,
-                      i.summary, i.published_at, i.fetched_at, i.body_markdown,
+                      i.summary, i.image_url, i.published_at, i.fetched_at, i.body_markdown,
                       i.body_status, i.body_fetched_at, i.body_error
                FROM items i JOIN feeds f ON f.id = i.feed_id WHERE i.id = ?""",
             (item_id,),

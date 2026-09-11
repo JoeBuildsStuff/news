@@ -27,6 +27,18 @@ def main() -> None:
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--list", action="store_true", help="List recent stored items")
     parser.add_argument("--limit", type=int, default=20, help="Items to show with --list")
+    parser.add_argument(
+        "--fill-images",
+        type=int,
+        default=25,
+        help="Max og:image fetches per feed for items missing image_url (0=feed media only)",
+    )
+    parser.add_argument(
+        "--image-delay",
+        type=float,
+        default=0.2,
+        help="Delay in seconds between og:image page fetches",
+    )
     args = parser.parse_args()
 
     conn = connect(args.db, seed=False)
@@ -42,7 +54,12 @@ def main() -> None:
             print("No enabled RSS subscriptions in the database.", file=sys.stderr)
             return
         for feed in feeds:
-            fetch_one(conn, feed)
+            fetch_one(
+                conn,
+                feed,
+                fill_images=args.fill_images,
+                image_delay=args.image_delay,
+            )
     finally:
         conn.close()
 
