@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 
 from backend.api.deps import auth_required, get_conn, require_admin
 from backend.services import subscriptions as subs
+from backend.services.link_previews import (
+    get_or_fetch_preview,
+    parse_media_json,
+    preview_to_media,
+    url_in_corpus,
+)
 
 router = APIRouter()
 
@@ -17,12 +23,13 @@ ITEM_SELECT = """
     i.id, i.feed_id, f.name AS feed_name, i.guid,
     i.title, i.link, i.summary, i.image_url, i.published_at, i.fetched_at,
     i.body_status, i.body_markdown, i.body_fetched_at, i.body_error,
-    i.conversation_id
+    i.conversation_id, i.media_json
 """
 
 
 def row_to_item(row: sqlite3.Row, *, include_body: bool = False) -> dict[str, Any]:
     keys = row.keys()
+    media = parse_media_json(row["media_json"]) if "media_json" in keys else []
     item: dict[str, Any] = {
         "id": row["id"],
         "feed_id": row["feed_id"],
@@ -36,6 +43,7 @@ def row_to_item(row: sqlite3.Row, *, include_body: bool = False) -> dict[str, An
         "fetched_at": row["fetched_at"],
         "body_status": row["body_status"],
         "conversation_id": row["conversation_id"] if "conversation_id" in keys else None,
+        "media": media,
     }
     if "thread_count" in keys:
         item["thread_count"] = int(row["thread_count"] or 1)
@@ -287,3 +295,51 @@ def get_item(item_id: int) -> dict[str, Any]:
     item["thread"] = thread
     item["thread_count"] = len(thread)
     return item
+
+
+class UnfurlRequest(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=20)
+
+
+@router.post("/api/unfurl")
+def unfurl_urls(body: UnfurlRequest) -> dict[str, Any]:
+    """Resolve stored item URLs into image / video / website previews."""
+    previews: list[dict[str, Any]] = []
+    with get_conn() as conn:
+        for raw in body.urls:
+            url = str(raw).strip()
+            if not url:
+                continue
+            if url.startswith("http://") or url.startswith("https://"):
+                parsed_ok = True
+            else:
+                parsed_ok = False
+            if not parsed_ok or not url_in_corpus(conn, url):
+                previews.append(
+                    {
+                        "url": url,
+                        "kind": "skip",
+                        "status": "error",
+                        "error": "url is not from a stored item",
+                    }
+                )
+                continue
+            preview = get_or_fetch_preview(conn, url)
+            media = preview_to_media(preview, tco=url)
+            previews.append(
+                {
+                    "url": url,
+                    "resolved_url": preview.get("resolved_url"),
+                    "kind": preview.get("kind"),
+                    "status": preview.get("status"),
+                    "title": preview.get("title"),
+                    "description": preview.get("description"),
+                    "image_url": preview.get("image_url"),
+                    "video_url": preview.get("video_url"),
+                    "site_name": preview.get("site_name"),
+                    "embed": preview.get("embed"),
+                    "media": media,
+                    "error": preview.get("error"),
+                }
+            )
+    return {"previews": previews}

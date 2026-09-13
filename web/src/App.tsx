@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
-import ReactMarkdown from "react-markdown"
 import { ExternalLinkIcon, SettingsIcon } from "lucide-react"
 
 import { fetchFeeds, fetchItem, fetchItems, type Feed, type Item } from "@/api"
+import { ItemBody } from "@/components/item-body"
 import { ItemImage } from "@/components/item-image"
 import { ItemThread } from "@/components/item-thread"
 import { ModeToggle } from "@/components/mode-toggle"
@@ -32,12 +32,6 @@ function formatWhen(iso: string | null): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(d)
-}
-
-function stripHtml(html: string): string {
-  const tmp = document.createElement("div")
-  tmp.innerHTML = html
-  return tmp.textContent?.trim() ?? ""
 }
 
 export default function App() {
@@ -121,13 +115,6 @@ export default function App() {
     visibleDetail?.thread && visibleDetail.thread.length > 1
       ? visibleDetail.thread
       : null
-
-  const body =
-    visibleDetail?.body_status === "ok" && visibleDetail.body_markdown
-      ? visibleDetail.body_markdown
-      : visibleDetail?.summary
-        ? stripHtml(visibleDetail.summary)
-        : null
 
   return (
     <div className="mx-auto flex min-h-full max-w-6xl flex-col gap-6 p-6 md:p-8">
@@ -263,7 +250,7 @@ export default function App() {
             </Empty>
           )}
           {visibleDetail && (
-            <article className="flex flex-col gap-4 p-4 md:p-6">
+            <article className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:p-6">
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
@@ -309,29 +296,8 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  {visibleDetail.image_url && (
-                    <ItemImage
-                      key={visibleDetail.id}
-                      src={visibleDetail.image_url}
-                      alt=""
-                      className="bg-muted aspect-video w-full rounded-lg object-cover"
-                    />
-                  )}
                   <Separator />
-                  {body ? (
-                    <div className="typeset typeset-notes max-w-[42em]">
-                      {visibleDetail.body_status === "ok" &&
-                      visibleDetail.body_markdown ? (
-                        <ReactMarkdown>{visibleDetail.body_markdown}</ReactMarkdown>
-                      ) : (
-                        <p>{body}</p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground text-sm">
-                      No body stored. Run enrich.py or open the original link.
-                    </p>
-                  )}
+                  <ItemBody key={visibleDetail.id} item={visibleDetail} />
                 </>
               )}
             </article>

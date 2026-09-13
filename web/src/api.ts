@@ -1,3 +1,5 @@
+import type { ItemMedia } from "@/lib/links"
+
 export type Feed = {
   id: string
   name: string
@@ -42,6 +44,7 @@ export type Item = {
   thread_count?: number
   thread_latest?: string | null
   thread?: Item[]
+  media?: ItemMedia[]
 }
 
 const ADMIN_TOKEN_KEY = "news_admin_token"
@@ -163,4 +166,29 @@ export function fetchItems(opts: {
 
 export function fetchItem(id: number) {
   return getJson<Item>(`/api/items/${id}`)
+}
+
+export function unfurlUrls(urls: string[]) {
+  const unique = [...new Set(urls.filter(Boolean))].slice(0, 20)
+  if (unique.length === 0) {
+    return Promise.resolve({ previews: [] as UnfurlPreview[] })
+  }
+  return mutateJson<{ previews: UnfurlPreview[] }>("/api/unfurl", "POST", {
+    urls: unique,
+  })
+}
+
+export type UnfurlPreview = {
+  url: string
+  resolved_url?: string | null
+  kind?: string | null
+  status?: string | null
+  title?: string | null
+  description?: string | null
+  image_url?: string | null
+  video_url?: string | null
+  site_name?: string | null
+  embed?: boolean
+  media?: ItemMedia | null
+  error?: string | null
 }

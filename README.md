@@ -70,9 +70,9 @@ Polls enabled `kind=x` rows in SQLite (seeded once from `x_accounts.yaml`):
 python fetch_x.py
 ```
 
-After the first run, polls use `since_id` so you mostly pay for new posts. User IDs are resolved once and cached in `x_accounts`. Per-account retweet/reply exclusions come from the DB; CLI flags override for that run. Same-author thread replies share `conversation_id` and collapse to one row in the hub timeline.
+After the first run, polls use `since_id` so you mostly pay for new posts. User IDs are resolved once and cached in `x_accounts`. Per-account retweet/reply exclusions come from the DB; CLI flags override for that run. Same-author thread replies share `conversation_id` and collapse to one row in the hub timeline. Attached photos, videos (mp4 variants), and website cards are stored on `items.media_json` and rendered in the reader; the first still is also `image_url` for the timeline.
 
-Backfill recent posts (paginates; ignores `since_id`):
+Backfill recent posts (paginates; ignores `since_id`; also fills media on posts stored before this existed):
 
 ```bash
 python fetch_x.py --days 7
@@ -106,7 +106,7 @@ Useful flags: `--feed openai`, `--delay 0.4`, `--include-x`.
 
 ### Browse in the browser (local hub)
 
-FastAPI over `data/feeds.db` + Vite timeline UI. Pollers stay separate CLIs. Use the gear icon → **Sources** to add/remove RSS or X subscriptions and toggle retweets, or ask the chat assistant to do the same. X posts from the same account that belong to one conversation show as a single timeline row; open it to read the thread.
+FastAPI over `data/feeds.db` + Vite timeline UI. Pollers stay separate CLIs. Use the gear icon → **Sources** to add/remove RSS or X subscriptions and toggle retweets, or ask the chat assistant to do the same. X posts from the same account that belong to one conversation show as a single timeline row; open it to read the thread. Attached images, videos, and website cards render in the reader (run `python fetch_x.py --days 7` once to backfill media on older posts).
 
 Terminal 1 — API:
 
@@ -126,7 +126,7 @@ cd web && pnpm install && pnpm run dev
 #   → commits that stage web/ files run pnpm lint automatically
 ```
 
-Useful API routes: `GET /api/health`, `/api/feeds`, `/api/subscriptions`, `/api/items?feed_id=openai`, `/api/items/{id}`; mutations `POST|PATCH|DELETE /api/subscriptions`. Chat sessions and provider SSE endpoints live under `/api/chat/*`; attachments use `/api/files/*` and `/api/images/*`.
+Useful API routes: `GET /api/health`, `/api/feeds`, `/api/subscriptions`, `/api/items?feed_id=openai`, `/api/items/{id}`; `POST /api/unfurl` (body `{ "urls": [...] }`, only URLs already on stored items); mutations `POST|PATCH|DELETE /api/subscriptions`. Chat sessions and provider SSE endpoints live under `/api/chat/*`; attachments use `/api/files/*` and `/api/images/*`.
 
 ### Browse recent items (CLI)
 
@@ -162,10 +162,12 @@ When `NEWS_ADMIN_TOKEN` is set, Sources mutations need `Authorization: Bearer �
 feeds        — subscriptions (RSS or X): kind, enabled, exclude_retweets,
                exclude_replies, username + fetch status columns
 items        — articles/posts; UNIQUE(feed_id, guid)
-             — optional image_url (RSS media, X photo, or og:image)
+             — optional image_url (RSS media, X photo/video preview, or og:image)
+             — optional media_json (X photos, playable videos, website cards)
              — optional conversation_id (X threads; hub groups on this)
              — optional body_markdown / body_status from enrich.py
 x_accounts   — username → user_id cache for the X API
+link_previews — cached unfurls for leftover item URLs
 app_meta     — one-time seed flag (subscriptions_seeded)
 chat_*       — local chat sessions, messages, attachments, tools, and branches
 ```

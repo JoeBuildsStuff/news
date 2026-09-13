@@ -1,8 +1,7 @@
-import ReactMarkdown from "react-markdown"
 import { ExternalLinkIcon } from "lucide-react"
 
 import type { Item } from "@/api"
-import { ItemImage } from "@/components/item-image"
+import { ItemBody } from "@/components/item-body"
 import { buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -18,27 +17,10 @@ function formatWhen(iso: string | null): string {
   }).format(d)
 }
 
-function stripHtml(html: string): string {
-  const tmp = document.createElement("div")
-  tmp.innerHTML = html
-  return tmp.textContent?.trim() ?? ""
-}
-
-function postBody(post: Item): { markdown: string | null; text: string | null } {
-  if (post.body_status === "ok" && post.body_markdown) {
-    return { markdown: post.body_markdown, text: null }
-  }
-  if (post.summary) {
-    return { markdown: null, text: stripHtml(post.summary) }
-  }
-  return { markdown: null, text: null }
-}
-
 export function ItemThread({ posts }: { posts: Item[] }) {
   return (
     <ol className="flex flex-col">
       {posts.map((post, index) => {
-        const body = postBody(post)
         const last = index === posts.length - 1
         return (
           <li key={post.id} className="flex gap-3">
@@ -64,22 +46,7 @@ export function ItemThread({ posts }: { posts: Item[] }) {
                   </a>
                 )}
               </div>
-              {post.image_url && (
-                <ItemImage
-                  src={post.image_url}
-                  alt=""
-                  className="bg-muted aspect-video w-full rounded-lg object-cover"
-                />
-              )}
-              {body.markdown ? (
-                <div className="typeset typeset-notes max-w-[42em]">
-                  <ReactMarkdown>{body.markdown}</ReactMarkdown>
-                </div>
-              ) : body.text ? (
-                <p className="text-sm leading-relaxed whitespace-pre-wrap">{body.text}</p>
-              ) : (
-                <p className="text-muted-foreground text-sm">No text stored.</p>
-              )}
+              <ItemBody key={post.id} item={post} />
             </div>
           </li>
         )

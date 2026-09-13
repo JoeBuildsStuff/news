@@ -101,6 +101,8 @@ def connect(db_path: Path, *, seed: bool = True) -> sqlite3.Connection:
     ensure_body_columns(conn)
     ensure_image_column(conn)
     ensure_conversation_column(conn)
+    ensure_media_column(conn)
+    ensure_link_preview_schema(conn)
     ensure_subscription_columns(conn)
     from backend.services.chat_db import ensure_chat_schema
 
@@ -137,6 +139,36 @@ def ensure_image_column(conn: sqlite3.Connection) -> None:
     if "image_url" not in existing:
         conn.execute("ALTER TABLE items ADD COLUMN image_url TEXT")
         conn.commit()
+
+
+def ensure_media_column(conn: sqlite3.Connection) -> None:
+    """JSON list of photos, videos, and website cards (FR-006)."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+    if "media_json" not in existing:
+        conn.execute("ALTER TABLE items ADD COLUMN media_json TEXT")
+        conn.commit()
+
+
+def ensure_link_preview_schema(conn: sqlite3.Connection) -> None:
+    """Cache for on-demand URL unfurls (website / image / video)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS link_previews (
+            url TEXT PRIMARY KEY,
+            resolved_url TEXT,
+            kind TEXT NOT NULL,
+            title TEXT,
+            description TEXT,
+            image_url TEXT,
+            video_url TEXT,
+            site_name TEXT,
+            fetched_at TEXT NOT NULL,
+            status TEXT,
+            error TEXT
+        )
+        """
+    )
+    conn.commit()
 
 
 def ensure_conversation_column(conn: sqlite3.Connection) -> None:
@@ -400,8 +432,8 @@ _IMG_TAG_RE = re.compile(r"<img\b([^>]+)>", re.I)
 _SHARE_IMAGE_KEYS = ("og:image", "og:image:url", "twitter:image", "twitter:image:src")
 
 
-def normalize_image_url(value: object, *, base: str | None = None) -> str | None:
-    """Keep http(s) image URLs only; resolve relative paths against base."""
+def normalize_http_url(value: object, *, base: str | None = None) -> str | None:
+    """Keep http(s) URLs only; resolve relative paths against base."""
     if not value:
         return None
     url = unescape(str(value)).strip()
@@ -413,6 +445,11 @@ def normalize_image_url(value: object, *, base: str | None = None) -> str | None
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
     return url
+
+
+def normalize_image_url(value: object, *, base: str | None = None) -> str | None:
+    """Keep http(s) image URLs only; resolve relative paths against base."""
+    return normalize_http_url(value, base=base)
 
 
 def _looks_like_image(url: str, *, type_: str | None = None, medium: str | None = None) -> bool:

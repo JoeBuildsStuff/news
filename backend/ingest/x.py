@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 from xdk import Client
@@ -19,10 +21,12 @@ from backend.db import (
     list_enabled_subscriptions,
     list_recent,
     mark_feed,
+    normalize_http_url,
     normalize_image_url,
     seed_subscriptions,
     upsert_feed,
 )
+from backend.services.link_previews import is_x_status_url
 
 DEFAULT_CONFIG = DEFAULT_X_CONFIG
 POST_FIELDS = [
@@ -33,8 +37,19 @@ POST_FIELDS = [
     "public_metrics",
     "text",
     "attachments",
+    "entities",
 ]
-MEDIA_FIELDS = ["url", "preview_image_url", "type", "media_key"]
+MEDIA_FIELDS = [
+    "url",
+    "preview_image_url",
+    "type",
+    "media_key",
+    "variants",
+    "width",
+    "height",
+    "alt_text",
+    "duration_ms",
+]
 POST_EXPANSIONS = ["attachments.media_keys"]
 
 
@@ -138,34 +153,184 @@ def latest_post_id(conn: sqlite3.Connection, feed_id: str) -> str | None:
     return row["guid"] if row else None
 
 
-def _media_image_url(media: object) -> str | None:
-    url = getattr(media, "url", None) or getattr(media, "preview_image_url", None)
-    return normalize_image_url(url)
+def _attr(obj: object, name: str, default: object = None) -> object:
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
 
 
-def collect_media_urls(page: object) -> dict[str, str]:
-    out: dict[str, str] = {}
+def collect_media_by_key(page: object) -> dict[str, object]:
+    out: dict[str, object] = {}
     includes = getattr(page, "includes", None)
     media_list = getattr(includes, "media", None) if includes is not None else None
     if not media_list:
         return out
     for media in media_list:
-        key = getattr(media, "media_key", None)
-        url = _media_image_url(media)
-        if key and url:
-            out[str(key)] = url
+        key = _attr(media, "media_key")
+        if key:
+            out[str(key)] = media
     return out
 
 
-def post_image_url(post: object, media_by_key: dict[str, str]) -> str | None:
-    attachments = getattr(post, "attachments", None)
-    keys = getattr(attachments, "media_keys", None) if attachments is not None else None
-    if not keys:
-        return None
-    for key in keys:
-        url = media_by_key.get(str(key))
+def collect_media_urls(page: object) -> dict[str, str]:
+    """Legacy map of media_key → still/preview URL (tests / older callers)."""
+    out: dict[str, str] = {}
+    for key, media in collect_media_by_key(page).items():
+        url = _media_still_url(media)
         if url:
-            return url
+            out[key] = url
+    return out
+
+
+def _media_still_url(media: object) -> str | None:
+    url = _attr(media, "url") or _attr(media, "preview_image_url")
+    return normalize_image_url(url)
+
+
+def _best_mp4_url(media: object) -> str | None:
+    variants = _attr(media, "variants") or []
+    best_url: str | None = None
+    best_rate = -1
+    for variant in variants:
+        content_type = str(_attr(variant, "content_type") or "").lower()
+        url = normalize_http_url(_attr(variant, "url"))
+        if not url or "mp4" not in content_type:
+            continue
+        rate = _attr(variant, "bit_rate") or 0
+        try:
+            rate_i = int(rate)
+        except (TypeError, ValueError):
+            rate_i = 0
+        if rate_i >= best_rate:
+            best_rate = rate_i
+            best_url = url
+    return best_url
+
+
+def _url_entities(post: object) -> list:
+    entities = _attr(post, "entities")
+    urls = _attr(entities, "urls") if entities is not None else None
+    return list(urls or [])
+
+
+def _entity_image_url(entity: object) -> str | None:
+    images = _attr(entity, "images") or []
+    best_url: str | None = None
+    best_width = -1
+    for image in images:
+        url = normalize_http_url(_attr(image, "url"))
+        width = _attr(image, "width") or 0
+        try:
+            width_i = int(width)
+        except (TypeError, ValueError):
+            width_i = 0
+        if url and width_i >= best_width:
+            best_width = width_i
+            best_url = url
+    return best_url
+
+
+def post_media_list(post: object, media_by_key: dict[str, object]) -> list[dict]:
+    """Photos, playable videos, and website cards for one post."""
+    tco_by_key: dict[str, str] = {}
+    websites: list[dict] = []
+    for entity in _url_entities(post):
+        tco = normalize_http_url(_attr(entity, "url"))
+        media_key = _attr(entity, "media_key")
+        if media_key:
+            tco_by_key[str(media_key)] = tco or ""
+            continue
+        expanded = normalize_http_url(
+            _attr(entity, "unwound_url") or _attr(entity, "expanded_url")
+        )
+        if not expanded or is_x_status_url(expanded):
+            continue
+        title = _attr(entity, "title")
+        description = _attr(entity, "description")
+        display = _attr(entity, "display_url")
+        image_url = _entity_image_url(entity)
+        host = urlparse(expanded).netloc.removeprefix("www.")
+        websites.append(
+            {
+                "kind": "website",
+                "url": expanded,
+                "title": (
+                    str(title).strip()
+                    if title
+                    else (str(display).strip() if display else None)
+                ),
+                "description": str(description).strip() if description else None,
+                "image_url": image_url,
+                "site_name": host,
+                "tco": tco,
+            }
+        )
+
+    out: list[dict] = []
+    attachments = _attr(post, "attachments")
+    keys = _attr(attachments, "media_keys") if attachments is not None else None
+    for key in keys or []:
+        media = media_by_key.get(str(key))
+        if media is None:
+            continue
+        media_type = str(_attr(media, "type") or "photo").lower()
+        tco = tco_by_key.get(str(key)) or None
+        alt = _attr(media, "alt_text")
+        if media_type in {"video", "animated_gif"}:
+            video_url = _best_mp4_url(media)
+            preview = normalize_http_url(_attr(media, "preview_image_url"))
+            if video_url:
+                out.append(
+                    {
+                        "kind": "video",
+                        "url": video_url,
+                        "preview_url": preview,
+                        "alt": alt,
+                        "tco": tco,
+                    }
+                )
+            elif preview:
+                out.append(
+                    {
+                        "kind": "photo",
+                        "url": preview,
+                        "preview_url": None,
+                        "alt": alt,
+                        "tco": tco,
+                    }
+                )
+            continue
+        photo_url = _media_still_url(media)
+        if photo_url:
+            out.append(
+                {
+                    "kind": "photo",
+                    "url": photo_url,
+                    "preview_url": None,
+                    "alt": alt,
+                    "tco": tco,
+                }
+            )
+    out.extend(websites)
+    return out
+
+
+def post_image_url(post: object, media_by_key: dict[str, object]) -> str | None:
+    return media_list_image_url(post_media_list(post, media_by_key))
+
+
+def media_list_image_url(media_list: list[dict]) -> str | None:
+    for item in media_list:
+        kind = item.get("kind")
+        if kind == "photo" and item.get("url"):
+            return str(item["url"])
+        if kind == "video" and (item.get("preview_url") or item.get("url")):
+            return str(item.get("preview_url") or item["url"])
+    for item in media_list:
+        if item.get("kind") == "website" and item.get("image_url"):
+            return str(item["image_url"])
     return None
 
 
@@ -175,7 +340,7 @@ def store_posts(
     feed_id: str,
     username: str,
     posts: list,
-    media_by_key: dict[str, str] | None = None,
+    media_by_key: dict[str, object] | None = None,
 ) -> tuple[int, int]:
     now = datetime.now(timezone.utc).isoformat()
     inserted = 0
@@ -194,7 +359,9 @@ def store_posts(
 
         title = text.strip().split("\n", 1)[0][:180] or f"@{username} post"
         link = f"https://x.com/{username}/status/{post_id}"
-        image_url = post_image_url(post, media_by_key)
+        media_list = post_media_list(post, media_by_key)
+        image_url = media_list_image_url(media_list)
+        media_json = json.dumps(media_list, ensure_ascii=False) if media_list else None
         conversation_id = str(getattr(post, "conversation_id", None) or post_id)
 
         existing = conn.execute(
@@ -206,9 +373,9 @@ def store_posts(
             """
             INSERT INTO items (
                 feed_id, guid, title, link, summary, published_at, fetched_at,
-                image_url, conversation_id
+                image_url, conversation_id, media_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(feed_id, guid) DO UPDATE SET
                 title = excluded.title,
                 link = excluded.link,
@@ -217,7 +384,8 @@ def store_posts(
                 image_url = COALESCE(excluded.image_url, items.image_url),
                 conversation_id = COALESCE(
                     excluded.conversation_id, items.conversation_id
-                )
+                ),
+                media_json = COALESCE(excluded.media_json, items.media_json)
             """,
             (
                 feed_id,
@@ -229,6 +397,7 @@ def store_posts(
                 now,
                 image_url,
                 conversation_id,
+                media_json,
             ),
         )
         if existing:
@@ -288,13 +457,13 @@ def fetch_account(
                 kwargs["since_id"] = since_id
 
         posts: list = []
-        media_by_key: dict[str, str] = {}
+        media_by_key: dict[str, object] = {}
         pages = 0
         for page in client.users.get_posts(**kwargs):
             pages += 1
             if page.data:
                 posts.extend(page.data)
-            media_by_key.update(collect_media_urls(page))
+            media_by_key.update(collect_media_by_key(page))
             # Incremental polls only need the newest page.
             if days is None:
                 break

@@ -19,3 +19,4 @@ Open ideas and design notes. Not a commitment to build — a place to park conte
 | [FR-003](./FR-003-news-hub-chat.md) | News hub chat assistant | implemented | 2026-08-08 |
 | [FR-004](./FR-004-item-images.md) | Store and display item images | done | 2026-09-10 |
 | [FR-005](./FR-005-x-threads.md) | Group same-author X replies as threads | done | 2026-09-10 |
+| [FR-006](./FR-006-link-previews.md) | Link, image, and video previews | done | 2026-09-12 |
