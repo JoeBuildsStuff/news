@@ -25,7 +25,10 @@ jobs:
       - name: Compile Python modules
         run: |
           python -m compileall -q backend api.py fetch_feeds.py fetch_x.py backfill.py enrich.py \
-            scripts/refresh.py scripts/backfill_daily.py
+            scripts/refresh.py scripts/backfill_daily.py tests
+
+      - name: Test Python
+        run: python -m unittest discover -s tests -q
 
       - uses: pnpm/action-setup@v4
         with:

@@ -35,6 +35,7 @@ news/
 ├── fetch_feeds.py           # thin shim → backend.ingest.feeds (+ re-exports)
 ├── fetch_x.py / backfill.py / enrich.py   # thin shims
 ├── scripts/                 # ofelia / cron entrypoints
+├── tests/                   # unittest (news_search and similar)
 ├── web/                     # Vite + React + shadcn timeline UI
 ├── Dockerfile
 ├── docker-compose.example.yml
@@ -125,6 +126,7 @@ python backfill.py --days 7
 python enrich.py
 python api.py
 # or: python -m backend
+python -m unittest discover -s tests -q
 cd web && pnpm install && pnpm run dev
 # container:
 cp docker-compose.example.yml docker-compose.yml && docker compose up -d

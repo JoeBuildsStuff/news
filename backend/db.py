@@ -100,10 +100,10 @@ def connect(db_path: Path, *, seed: bool = True) -> sqlite3.Connection:
     )
     ensure_body_columns(conn)
     ensure_image_column(conn)
+    ensure_subscription_columns(conn)
     ensure_conversation_column(conn)
     ensure_media_column(conn)
     ensure_link_preview_schema(conn)
-    ensure_subscription_columns(conn)
     from backend.services.chat_db import ensure_chat_schema
 
     ensure_chat_schema(conn)

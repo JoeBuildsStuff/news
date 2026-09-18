@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import os
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -33,7 +34,8 @@ Help the user discover, understand, and compare AI-lab news stored in this hub.
 You can also manage Sources (subscriptions) when the user asks.
 
 Read tools:
-- news_search for questions about stored articles
+- news_search for questions about stored articles. Prefer a quoted title or
+  2–4 distinctive words; long keyword lists are ranked, not all-required.
 - news_get_item when an item id is available
 - news_list_feeds for enabled sources on the timeline
 - news_list_subscriptions for all sources including disabled ones and X flags
@@ -70,6 +72,97 @@ def _connect(context: ToolContext | None):
     return connect(_db_path(context) or DEFAULT_DB, seed=False)
 
 
+_NEWS_SEARCH_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+    }
+)
+_NEWS_SEARCH_QUOTES = re.compile(r'"([^"]*)"|“([^”]*)”')
+_LIKE_FIELD_SQL = (
+    "(i.title LIKE ? ESCAPE '\\' OR i.summary LIKE ? ESCAPE '\\' "
+    "OR i.body_markdown LIKE ? ESCAPE '\\')"
+)
+
+
+def parse_news_search_query(query: str) -> tuple[list[str], list[str]]:
+    """Split a query into required quoted phrases and optional keywords."""
+    phrases: list[str] = []
+    leftover: list[str] = []
+    pos = 0
+    for match in _NEWS_SEARCH_QUOTES.finditer(query):
+        leftover.append(query[pos : match.start()])
+        raw = match.group(1)
+        if raw is None:
+            raw = match.group(2) or ""
+        phrase = _clean_search_term(raw)
+        if phrase:
+            phrases.append(phrase)
+        pos = match.end()
+    leftover.append(query[pos:])
+
+    terms: list[str] = []
+    seen = {phrase.lower() for phrase in phrases}
+    for chunk in leftover:
+        for token in chunk.split():
+            term = _clean_search_term(token)
+            if not term or term.lower() in _NEWS_SEARCH_STOPWORDS:
+                continue
+            key = term.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            terms.append(term)
+    return phrases[:12], terms[: max(0, 12 - len(phrases[:12]))]
+
+
+def _clean_search_term(value: str) -> str:
+    term = re.sub(r"\s+", " ", value).strip()
+    return term.strip("\"'“”‘’.,:;!?()[]{}").strip()
+
+
+def _like_pattern(term: str) -> str:
+    escaped = (
+        term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    for dash in ("\u2014", "\u2013", "-"):
+        escaped = escaped.replace(dash, "%")
+    return f"%{escaped}%"
+
+
+def _term_match_sql() -> str:
+    return _LIKE_FIELD_SQL
+
+
+def _term_hit_sql() -> str:
+    return f"(CASE WHEN {_LIKE_FIELD_SQL} THEN 1 ELSE 0 END)"
+
+
+def _min_optional_matches(term_count: int, *, require_all: bool) -> int:
+    if require_all or term_count <= 3:
+        return term_count
+    if term_count <= 6:
+        return 2
+    return 3
+
+
 def news_search(args: dict[str, Any], context: ToolContext | None = None) -> ToolResult:
     query = str(args.get("query") or "").strip()
     if not query:
@@ -80,30 +173,54 @@ def news_search(args: dict[str, Any], context: ToolContext | None = None) -> Too
         limit = max(1, min(int(args.get("limit", 8)), 20))
     except (TypeError, ValueError):
         limit = 8
-    terms = [term for term in query.split() if term][:12]
-    clauses = []
-    values: list[str] = []
-    for term in terms:
-        pattern = f"%{term}%"
-        clauses.append(
-            "(i.title LIKE ? OR i.summary LIKE ? OR i.body_markdown LIKE ?)"
-        )
-        values.extend([pattern, pattern, pattern])
-    where = " AND ".join(clauses)
+    phrases, terms = parse_news_search_query(query)
+    scored_terms = phrases + terms
+    if not scored_terms:
+        return _failure("query has no searchable terms")
+    require_all = not phrases and len(terms) <= 3
+    min_matches = (
+        len(phrases)
+        if phrases
+        else _min_optional_matches(len(terms), require_all=require_all)
+    )
+    where_parts: list[str] = []
+    where_values: list[str] = []
+    for phrase in phrases:
+        where_parts.append(_term_match_sql())
+        where_values.extend([_like_pattern(phrase)] * 3)
+    if terms and not phrases:
+        optional_sql = [_term_match_sql() for _ in terms]
+        joiner = " AND " if require_all else " OR "
+        where_parts.append("(" + joiner.join(optional_sql) + ")")
+        for term in terms:
+            where_values.extend([_like_pattern(term)] * 3)
+    hit_sql = " + ".join(_term_hit_sql() for _ in scored_terms)
+    hit_values: list[str] = []
+    for term in scored_terms:
+        hit_values.extend([_like_pattern(term)] * 3)
+    where = " AND ".join(where_parts)
     conn = _connect(context)
     try:
         rows = conn.execute(
-            f"""SELECT i.id, i.feed_id, f.name AS feed_name, i.title, i.link,
-                       i.summary, i.image_url, i.published_at, i.body_status
-                FROM items i JOIN feeds f ON f.id = i.feed_id
-                WHERE {where}
-                ORDER BY COALESCE(i.published_at, i.fetched_at) DESC
+            f"""SELECT * FROM (
+                    SELECT i.id, i.feed_id, f.name AS feed_name, i.title, i.link,
+                           i.summary, i.image_url, i.published_at, i.body_status,
+                           i.fetched_at,
+                           ({hit_sql}) AS match_count
+                    FROM items i JOIN feeds f ON f.id = i.feed_id
+                    WHERE {where}
+                ) ranked
+                WHERE ranked.match_count >= ?
+                ORDER BY ranked.match_count DESC,
+                         COALESCE(ranked.published_at, ranked.fetched_at) DESC
                 LIMIT ?""",
-            [*values, limit],
+            [*hit_values, *where_values, min_matches, limit],
         ).fetchall()
         return _success(
             {
                 "query": query,
+                "terms": scored_terms,
+                "min_matches": min_matches,
                 "items": [
                     {
                         "id": row["id"],
@@ -602,9 +719,14 @@ def _tool(name: str, description: str, properties: dict[str, Any], required: lis
 available_tools: list[dict[str, Any]] = [
     _tool(
         "news_search",
-        "Search stored news article titles, summaries, and enriched bodies.",
+        "Search stored news article titles, summaries, and enriched bodies. "
+        "Prefer a quoted title or a few distinctive keywords; extra words are "
+        "ranked rather than all required.",
         {
-            "query": {"type": "string", "description": "Search terms."},
+            "query": {
+                "type": "string",
+                "description": "Quoted title and/or keywords. Stopwords are ignored.",
+            },
             "limit": {"type": "integer", "description": "Maximum results, 1-20."},
         },
         ["query"],

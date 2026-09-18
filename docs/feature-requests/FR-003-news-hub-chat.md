@@ -30,6 +30,7 @@ See `.env.example`: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `CEREB
 - Persist `chat_messages.model` for assistant/user turns
 - OpenAI gpt-5.* uses `/v1/responses` so tools + `reasoning_effort` work together
 - Chat title generation: handle empty Cerebras content, raise token budget, fall back to Anthropic
+- `news_search` ranks keyword-stuffed queries and treats quoted titles as phrases (2026-09-15)
 
 ## Source management via chat (2026-08-08)
 
