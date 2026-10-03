@@ -24,3 +24,11 @@ accounts:
   - id: x-claudeai
     name: Claude (X)
     username: claudeai
+
+  - id: x-officiallogank
+    name: Logan Kilpatrick (X)
+    username: OfficialLoganK
+
+  - id: x-googledeepmind
+    name: Google DeepMind (X)
+    username: GoogleDeepMind
