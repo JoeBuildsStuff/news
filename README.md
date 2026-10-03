@@ -70,7 +70,7 @@ Polls enabled `kind=x` rows in SQLite (seeded once from `x_accounts.yaml`):
 python fetch_x.py
 ```
 
-After the first run, polls use `since_id` so you mostly pay for new posts. User IDs are resolved once and cached in `x_accounts`. Per-account retweet/reply exclusions come from the DB; CLI flags override for that run. Same-author thread replies share `conversation_id` and collapse to one row in the hub timeline. Attached photos, videos (mp4 variants), and website cards are stored on `items.media_json` and rendered in the reader; the first still is also `image_url` for the timeline.
+After the first run, polls use `since_id` so you mostly pay for new posts. User IDs are resolved once and cached in `x_accounts`. Per-account retweet/reply exclusions come from the DB; CLI flags override for that run. Same-author thread replies share `conversation_id` and collapse to one row in the hub timeline. Attached photos, videos (mp4 variants), animated GIFs, and website cards are stored on `items.media_json` and rendered in the reader; the first still is also `image_url` for the timeline. GIFs loop inline. X mp4s are streamed through `GET /api/media/video` because `video.twimg.com` returns 403 when a browser `<video>` sends a Referer.
 
 Backfill recent posts (paginates; ignores `since_id`; also fills media on posts stored before this existed):
 

@@ -76,6 +76,29 @@ def _host(url: str) -> str:
     return urlparse(url).netloc.lower().split("@")[-1]
 
 
+def allowed_twimg_video_url(url: str) -> str | None:
+    """Canonical https://video.twimg.com/*.mp4 URL, or None if it is not one.
+
+    X's CDN returns 403 when a browser <video> sends a Referer. Callers proxy
+    only this host so the API is not an open redirect or SSRF hop.
+    """
+    parsed = urlparse(url.strip())
+    if parsed.scheme != "https" or parsed.username or parsed.password:
+        return None
+    if (parsed.hostname or "").lower() != "video.twimg.com":
+        return None
+    if parsed.port not in (None, 443):
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts or any(part in {".", ".."} for part in parts):
+        return None
+    if not parts[-1].lower().endswith(".mp4"):
+        return None
+    path = "/" + "/".join(parts)
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"https://video.twimg.com{path}{query}"
+
+
 def is_x_status_url(url: str) -> bool:
     host = _host(url)
     if host in {"pic.x.com", "pic.twitter.com"}:
@@ -428,6 +451,7 @@ def get_or_fetch_preview(conn: sqlite3.Connection, url: str) -> dict[str, Any]:
 
 
 __all__ = [
+    "allowed_twimg_video_url",
     "extract_urls",
     "fetch_preview",
     "get_or_fetch_preview",

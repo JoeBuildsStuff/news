@@ -282,15 +282,18 @@ def post_media_list(post: object, media_by_key: dict[str, object]) -> list[dict]
             video_url = _best_mp4_url(media)
             preview = normalize_http_url(_attr(media, "preview_image_url"))
             if video_url:
-                out.append(
-                    {
-                        "kind": "video",
-                        "url": video_url,
-                        "preview_url": preview,
-                        "alt": alt,
-                        "tco": tco,
-                    }
-                )
+                entry: dict = {
+                    "kind": "video",
+                    "url": video_url,
+                    "preview_url": preview,
+                    "alt": alt,
+                    "tco": tco,
+                }
+                # X animated GIFs are silent mp4s. Flag them so the reader loops
+                # them instead of showing a paused video control.
+                if media_type == "animated_gif":
+                    entry["gif"] = True
+                out.append(entry)
             elif preview:
                 out.append(
                     {

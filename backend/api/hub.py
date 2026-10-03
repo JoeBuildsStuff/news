@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.api.deps import auth_required, get_conn, require_admin
+from backend.config import USER_AGENT
 from backend.services import subscriptions as subs
 from backend.services.link_previews import (
+    allowed_twimg_video_url,
     get_or_fetch_preview,
     parse_media_json,
     preview_to_media,
@@ -299,6 +303,62 @@ def get_item(item_id: int) -> dict[str, Any]:
 
 class UnfurlRequest(BaseModel):
     urls: list[str] = Field(min_length=1, max_length=20)
+
+
+@router.get("/api/media/video")
+def proxy_twimg_video(
+    request: Request,
+    url: str = Query(min_length=1, max_length=2000),
+) -> StreamingResponse:
+    """Stream a stored X mp4 without sending this site as Referer.
+
+    video.twimg.com 403s browser <video> loads. The URL must already be on an item.
+    """
+    target = allowed_twimg_video_url(url)
+    if target is None or target != url.strip():
+        raise HTTPException(status_code=400, detail="unsupported media url")
+    with get_conn() as conn:
+        if not url_in_corpus(conn, target):
+            raise HTTPException(status_code=404, detail="media url is not on a stored item")
+
+    headers = {"User-Agent": USER_AGENT, "Accept": "video/mp4,*/*"}
+    range_header = request.headers.get("range")
+    if range_header:
+        headers["Range"] = range_header
+    client = httpx.Client(timeout=httpx.Timeout(20.0, read=60.0), follow_redirects=False)
+    try:
+        upstream = client.send(
+            client.build_request("GET", target, headers=headers),
+            stream=True,
+        )
+    except httpx.HTTPError as exc:
+        client.close()
+        raise HTTPException(status_code=502, detail="media fetch failed") from exc
+    if upstream.status_code not in {200, 206}:
+        upstream.close()
+        client.close()
+        raise HTTPException(status_code=502, detail="media unavailable")
+
+    def chunks() -> Iterator[bytes]:
+        try:
+            for chunk in upstream.iter_bytes():
+                yield chunk
+        finally:
+            upstream.close()
+            client.close()
+
+    passthrough = {
+        key: upstream.headers[key]
+        for key in (
+            "content-type",
+            "content-length",
+            "content-range",
+            "accept-ranges",
+            "cache-control",
+        )
+        if key in upstream.headers
+    }
+    return StreamingResponse(chunks(), status_code=upstream.status_code, headers=passthrough)
 
 
 @router.post("/api/unfurl")

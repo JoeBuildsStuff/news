@@ -9,6 +9,33 @@ export type ItemMedia = {
   alt?: string | null
   tco?: string | null
   embed?: boolean
+  /** X animated GIF stored as a silent mp4. */
+  gif?: boolean
+}
+
+export function isTwimgVideoUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === "https:" && parsed.hostname === "video.twimg.com"
+  } catch {
+    return false
+  }
+}
+
+/** Same-origin stream. Browser <video> sends a Referer that video.twimg.com 403s. */
+export function playableVideoUrl(url: string): string {
+  if (!isTwimgVideoUrl(url)) return url
+  return `/api/media/video?url=${encodeURIComponent(url)}`
+}
+
+/** Animated GIFs from X live at video.twimg.com/tweet_video/*.mp4. */
+export function isAnimatedGif(item: Pick<ItemMedia, "url" | "gif">): boolean {
+  if (item.gif) return true
+  try {
+    return new URL(item.url).pathname.includes("/tweet_video/")
+  } catch {
+    return false
+  }
 }
 
 const URL_RE = /https?:\/\/[^\s<>"')]+/gi

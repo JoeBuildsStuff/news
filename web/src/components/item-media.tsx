@@ -1,7 +1,9 @@
 import { ItemImage } from "@/components/item-image"
 import {
+  isAnimatedGif,
   isVimeoEmbed,
   isYoutubeEmbed,
+  playableVideoUrl,
   siteHost,
   type ItemMedia,
 } from "@/lib/links"
@@ -57,6 +59,32 @@ function VideoPlayer({ item }: { item: ItemMedia }) {
       </div>
     )
   }
+  const gif = isAnimatedGif(item)
+  const playable = playableVideoUrl(src)
+  if (gif) {
+    return (
+      <video
+        ref={(el) => {
+          if (el) el.muted = true
+        }}
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="auto"
+        poster={poster}
+        aria-label={item.alt || "Animated GIF"}
+        className="bg-muted w-full cursor-pointer rounded-lg"
+        onClick={(event) => {
+          const video = event.currentTarget
+          if (video.paused) void video.play()
+          else video.pause()
+        }}
+      >
+        <source src={playable} />
+      </video>
+    )
+  }
   return (
     <video
       controls
@@ -65,7 +93,7 @@ function VideoPlayer({ item }: { item: ItemMedia }) {
       poster={poster}
       className="bg-muted w-full rounded-lg"
     >
-      <source src={src} />
+      <source src={playable} />
     </video>
   )
 }

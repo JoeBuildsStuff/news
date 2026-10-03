@@ -92,7 +92,7 @@ chat_sessions / chat_messages(…, model, …) / chat_attachments / chat_tool_ca
 - Official `xdk` Client with bearer token; `since_id` after first store; `--days N` backfills.
 - Per-account `exclude_retweets` / `exclude_replies` from DB; CLI `--exclude-retweets` / `--include-replies` override for the run.
 - Stores `conversation_id` so same-author thread replies group in the hub. Existing rows without it are clustered once from near-simultaneous posts (retweets stay separate).
-- Requests `attachments.media_keys`, media `variants`, and `entities`. Stores photos, playable mp4s, and website cards on `items.media_json`; first still/preview also goes on `image_url`. Re-run `--days N` to backfill older posts.
+- Requests `attachments.media_keys`, media `variants`, and `entities`. Stores photos, playable mp4s, animated GIFs (`gif: true` on the video object; older rows use `/tweet_video/` URLs), and website cards on `items.media_json`; first still/preview also goes on `image_url`. Re-run `--days N` to backfill older posts.
 
 ### Anthropic backfill (`backend.ingest.backfill`)
 
@@ -104,14 +104,14 @@ chat_sessions / chat_messages(…, model, …) / chat_attachments / chat_tool_ca
 
 ### Read hub (`backend.main` + `web/`)
 
-- FastAPI: `/api/health`, `/api/feeds` (enabled chips), `/api/subscriptions` CRUD, `/api/items` (X threads collapsed), `/api/items/{id}` (includes `thread` when grouped), `POST /api/unfurl` (link previews for URLs already on stored items).
+- FastAPI: `/api/health`, `/api/feeds` (enabled chips), `/api/subscriptions` CRUD, `/api/items` (X threads collapsed), `/api/items/{id}` (includes `thread` when grouped), `POST /api/unfurl` (link previews for URLs already on stored items), `GET /api/media/video` (same-origin stream of a `video.twimg.com` mp4 that is already on a stored item).
 - Chat persistence and SSE provider routes live in `backend.api.chat` + `backend.services.chat_*`; same SQLite DB and `data/chat` storage root.
 - Chat providers are optional: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, or `CEREBRAS_API_KEY`; live web tools (`web_search` / `web_scrape`) use `JINA_API_KEY` (preferred) or `FIRECRAWL_API_KEY`.
 - Chat can manage Sources via tools: `news_list_subscriptions`, `news_add_subscription`, `news_update_subscription`, `news_unsubscribe` (shared `backend.services.subscriptions`; not gated by `NEWS_ADMIN_TOKEN`).
 - Optional `NEWS_ADMIN_TOKEN` gates subscription mutations.
 - UI Sources panel: add RSS/X, soft-unsubscribe, per-account include-retweets toggle.
 - Timeline shows `image_url` thumbnails; the reader pane shows a hero when present.
-- X posts render `media_json` in the reader: photos, playable videos, and website cards. Previewed `t.co` URLs are stripped from the post text.
+- X posts render `media_json` in the reader: photos, playable videos, looping muted GIFs, and website cards. X mp4s play through `/api/media/video` (the CDN 403s `<video>` requests that send a Referer; `referrerpolicy` on the element does not stop Chrome from sending one). Previewed `t.co` URLs are stripped from the post text.
 - Same-author X replies that share `conversation_id` are one timeline row with a thread badge; the reader lists posts in order.
 - Dev: API `:8000`, Vite `:5173` proxies `/api`.
 - Prod image: same process serves Vite build on `:3000` when `WEB_DIST` is set.
