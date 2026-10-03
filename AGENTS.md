@@ -111,7 +111,7 @@ chat_sessions / chat_messages(…, model, …) / chat_attachments / chat_tool_ca
 - Optional `NEWS_ADMIN_TOKEN` gates subscription mutations.
 - UI Sources panel: add RSS/X, soft-unsubscribe, per-account include-retweets toggle.
 - Timeline shows `image_url` thumbnails; the reader pane shows a hero when present.
-- X posts render `media_json` in the reader: photos, playable videos, looping muted GIFs, and website cards. X mp4s play through `/api/media/video` (the CDN 403s `<video>` requests that send a Referer; `referrerpolicy` on the element does not stop Chrome from sending one). Previewed `t.co` URLs are stripped from the post text.
+- X posts render `media_json` in the reader: photos, playable videos, looping muted GIFs, and website cards. X mp4s play through `/api/media/video` (the CDN 403s `<video>` requests that send a Referer; `referrerpolicy` on the element does not stop Chrome from sending one). Playback uses an in-page play button and seek bar; native `<video controls>` do not receive clicks inside the scrolling reader. Previewed `t.co` URLs are stripped from the post text.
 - Same-author X replies that share `conversation_id` are one timeline row with a thread badge; the reader lists posts in order.
 - Dev: API `:8000`, Vite `:5173` proxies `/api`.
 - Prod image: same process serves Vite build on `:3000` when `WEB_DIST` is set.

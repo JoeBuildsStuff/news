@@ -1,3 +1,6 @@
+import { useRef, useState } from "react"
+import { PauseIcon, PlayIcon } from "lucide-react"
+
 import { ItemImage } from "@/components/item-image"
 import {
   isAnimatedGif,
@@ -8,6 +11,14 @@ import {
   type ItemMedia,
 } from "@/lib/links"
 import { cn } from "@/lib/utils"
+
+function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00"
+  const total = Math.floor(seconds)
+  const minutes = Math.floor(total / 60)
+  const remain = total % 60
+  return `${minutes}:${remain.toString().padStart(2, "0")}`
+}
 
 function WebsiteCard({ item }: { item: ItemMedia }) {
   const href = item.url
@@ -46,6 +57,10 @@ function VideoPlayer({ item }: { item: ItemMedia }) {
   const src = item.url
   const poster = item.preview_url || item.image_url || undefined
   const embed = item.embed || isYoutubeEmbed(src) || isVimeoEmbed(src)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [paused, setPaused] = useState(true)
+  const [progress, setProgress] = useState(0)
+  const [duration, setDuration] = useState(0)
   if (embed) {
     return (
       <div className="bg-muted relative aspect-video w-full overflow-hidden rounded-lg">
@@ -61,40 +76,86 @@ function VideoPlayer({ item }: { item: ItemMedia }) {
   }
   const gif = isAnimatedGif(item)
   const playable = playableVideoUrl(src)
-  if (gif) {
-    return (
-      <video
-        ref={(el) => {
-          if (el) el.muted = true
-        }}
-        autoPlay
-        loop
-        muted
-        playsInline
-        preload="auto"
-        poster={poster}
-        aria-label={item.alt || "Animated GIF"}
-        className="bg-muted w-full cursor-pointer rounded-lg"
-        onClick={(event) => {
-          const video = event.currentTarget
-          if (video.paused) void video.play()
-          else video.pause()
-        }}
-      >
-        <source src={playable} />
-      </video>
-    )
+
+  function toggle() {
+    const video = videoRef.current
+    if (!video) return
+    if (video.paused) void video.play()
+    else video.pause()
   }
+
   return (
-    <video
-      controls
-      playsInline
-      preload="metadata"
-      poster={poster}
-      className="bg-muted w-full rounded-lg"
-    >
-      <source src={playable} />
-    </video>
+    <div className="bg-muted overflow-hidden rounded-lg">
+      <div className="relative">
+        <video
+          ref={(el) => {
+            videoRef.current = el
+            if (el && gif) el.muted = true
+          }}
+          src={playable}
+          poster={poster}
+          autoPlay={gif}
+          loop={gif}
+          muted={gif}
+          playsInline
+          preload="auto"
+          aria-label={gif ? item.alt || "Animated GIF" : item.alt || "Video"}
+          className="w-full"
+          onPlay={() => setPaused(false)}
+          onPause={() => setPaused(true)}
+          onLoadedMetadata={(event) => {
+            const next = event.currentTarget.duration
+            setDuration(Number.isFinite(next) ? next : 0)
+          }}
+          onTimeUpdate={(event) => setProgress(event.currentTarget.currentTime)}
+        />
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={paused ? (gif ? "Play GIF" : "Play video") : "Pause"}
+          className="absolute inset-0 flex items-center justify-center"
+        >
+          {paused && (
+            <span className="bg-background/80 text-foreground flex size-12 items-center justify-center rounded-full shadow-sm">
+              <PlayIcon className="size-5 translate-x-px" />
+            </span>
+          )}
+        </button>
+      </div>
+      {!gif && duration > 0 && (
+        <div className="flex items-center gap-2 px-2 py-1.5">
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label={paused ? "Play video" : "Pause video"}
+            className="text-foreground flex size-7 shrink-0 items-center justify-center"
+          >
+            {paused ? <PlayIcon className="size-4" /> : <PauseIcon className="size-4" />}
+          </button>
+          <span className="text-muted-foreground w-9 shrink-0 text-xs tabular-nums">
+            {formatTime(progress)}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={duration}
+            step={0.1}
+            value={Math.min(progress, duration)}
+            aria-label="Seek"
+            onChange={(event) => {
+              const next = Number(event.target.value)
+              const video = videoRef.current
+              if (video) video.currentTime = next
+              setProgress(next)
+            }}
+            className="w-full"
+          />
+          <span className="text-muted-foreground w-9 shrink-0 text-right text-xs tabular-nums">
+            {formatTime(duration)}
+          </span>
+        </div>
+      )}
+    </div>
   )
 }
 
